@@ -30,3 +30,168 @@ body {
   height: 100%;
   overflow: hidden;
 }
+
+.page-content {
+  padding: 24px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+}
+
+.dashboard-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+  justify-items: stretch;
+}
+
+.overview-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.overview-panel {
+  width: 100%;
+}
+
+.overview-title {
+  margin-bottom: 0;
+  font-size: 16px;
+}
+
+.overview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.overview-select {
+  min-width: 220px;
+}
+
+.history-card {
+  height: 50vh;
+  min-height: 320px;
+  margin-bottom: 24px;
+  --history-table-body-height: calc(50vh - 140px);
+}
+
+.task-card {
+  height: 100%;
+}
+
+.stopwatch-card {
+  height: 100%;
+}
+
+.history-table {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+  font-size: 13px;
+}
+
+.history-table__table {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.history-table__table .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+.history-table__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.task-composer__footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.project-modal__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.project-modal__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.project-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  html,
+  body {
+    overflow: auto;
+  }
+
+  .page-content {
+    padding: 16px;
+    height: auto;
+    overflow: auto;
+  }
+
+  .dashboard {
+    height: auto;
+  }
+
+  .dashboard-top {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-select {
+    min-width: 0;
+  }
+
+  .history-card {
+    height: 50vh;
+    margin-bottom: 16px;
+    --history-table-body-height: calc(50vh - 140px);
+  }
+}
+
+@media (max-width: 640px) {
+  .history-card {
+    margin-bottom: 12px;
+    --history-table-body-height: calc(50vh - 160px);
+  }
+  .overview-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

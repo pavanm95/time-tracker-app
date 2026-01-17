@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Card, Space, Typography } from "antd";
 import { TaskRow } from "../types/task";
 import { formatDuration, nowMs } from "../lib/time";
@@ -10,6 +10,39 @@ import { ACTIVE_TASK_RUNNING_START_KEY } from "../lib/storageKeys";
 import { toast } from "../lib/toast";
 
 type Status = "running" | "paused";
+
+const formatStatusLabel = (value: Status) =>
+  value.charAt(0).toUpperCase() + value.slice(1);
+
+const readStoredRunningStartMs = (taskId: string) => {
+  const raw = localStorage.getItem(ACTIVE_TASK_RUNNING_START_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as {
+      taskId?: string;
+      runningStartMs?: number;
+    };
+    if (parsed?.taskId !== taskId) return null;
+    if (typeof parsed.runningStartMs !== "number") return null;
+    return parsed.runningStartMs;
+  } catch {
+    return null;
+  }
+};
+
+const writeStoredRunningStartMs = (taskId: string, startMs: number) => {
+  localStorage.setItem(
+    ACTIVE_TASK_RUNNING_START_KEY,
+    JSON.stringify({
+      taskId,
+      runningStartMs: Math.floor(startMs),
+    }),
+  );
+};
+
+const clearStoredRunningStartMs = () => {
+  localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
+};
 
 export default function ActiveStopwatch({
   task,
@@ -24,47 +57,10 @@ export default function ActiveStopwatch({
   const [accumulatedMs, setAccumulatedMs] = useState<number>(
     task.accumulated_ms || 0,
   );
-  const [tick, setTick] = useState(0);
+  const [totalMs, setTotalMs] = useState<number>(task.accumulated_ms || 0);
 
   const runningStartRef = useRef<number>(nowMs()); // when current running slice began
   const tickRef = useRef<number | null>(null);
-
-  const readStoredRunningStartMs = () => {
-    const raw = localStorage.getItem(ACTIVE_TASK_RUNNING_START_KEY);
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw) as {
-        taskId?: string;
-        runningStartMs?: number;
-      };
-      if (parsed?.taskId !== task.id) return null;
-      if (typeof parsed.runningStartMs !== "number") return null;
-      return parsed.runningStartMs;
-    } catch {
-      return null;
-    }
-  };
-
-  const writeStoredRunningStartMs = (startMs: number) => {
-    localStorage.setItem(
-      ACTIVE_TASK_RUNNING_START_KEY,
-      JSON.stringify({
-        taskId: task.id,
-        runningStartMs: Math.floor(startMs),
-      }),
-    );
-  };
-
-  const clearStoredRunningStartMs = () => {
-    localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
-  };
-
-  const totalMs = useMemo(() => {
-    if (status === "running") {
-      return accumulatedMs + (nowMs() - runningStartRef.current);
-    }
-    return accumulatedMs;
-  }, [accumulatedMs, status, tick]);
 
   useEffect(() => {
     if (status !== "running") {
@@ -72,7 +68,7 @@ export default function ActiveStopwatch({
       return;
     }
 
-    const storedStart = readStoredRunningStartMs();
+    const storedStart = readStoredRunningStartMs(task.id);
     if (storedStart !== null) {
       runningStartRef.current = storedStart;
     } else {
@@ -82,7 +78,7 @@ export default function ActiveStopwatch({
       runningStartRef.current = Number.isNaN(fallbackMs) ? nowMs() : fallbackMs;
     }
 
-    writeStoredRunningStartMs(runningStartRef.current);
+    writeStoredRunningStartMs(task.id, runningStartRef.current);
   }, [status, task.id, task.updated_at, task.started_at]);
 
   // ticking
@@ -90,15 +86,14 @@ export default function ActiveStopwatch({
     if (status !== "running") return;
 
     tickRef.current = window.setInterval(() => {
-      // Trigger re-render so totalMs recomputes from nowMs().
-      setTick((value) => value + 1);
+      setTotalMs(accumulatedMs + (nowMs() - runningStartRef.current));
     }, 250);
 
     return () => {
       if (tickRef.current) window.clearInterval(tickRef.current);
       tickRef.current = null;
     };
-  }, [status]);
+  }, [status, accumulatedMs]);
 
   // Keep server in sync on transitions (pause/resume/finish/cancel)
   const persist = async (patch: Partial<TaskRow>) => {
@@ -125,27 +120,29 @@ export default function ActiveStopwatch({
     const nextAccum = accumulatedMs + sliceMs;
 
     setAccumulatedMs(nextAccum);
+    setTotalMs(nextAccum);
     setStatus("paused");
     clearStoredRunningStartMs();
 
     await persist({
       status: "paused",
       accumulated_ms: Math.floor(nextAccum),
-    } as any);
+    });
   };
 
   const resume = async () => {
     if (status !== "paused") return;
 
     runningStartRef.current = nowMs();
-    writeStoredRunningStartMs(runningStartRef.current);
+    writeStoredRunningStartMs(task.id, runningStartRef.current);
+    setTotalMs(accumulatedMs);
     setStatus("running");
 
     await persist({
       status: "running",
       // keep accumulated as-is
       accumulated_ms: Math.floor(accumulatedMs),
-    } as any);
+    });
   };
 
   const finish = async () => {
@@ -159,8 +156,9 @@ export default function ActiveStopwatch({
       ended_at: new Date().toISOString(),
       duration_ms: Math.floor(finalMs),
       accumulated_ms: Math.floor(finalMs),
-    } as any);
+    });
 
+    setTotalMs(finalMs);
     clearStoredRunningStartMs();
     onFinishedOrCanceled();
   };
@@ -172,8 +170,9 @@ export default function ActiveStopwatch({
       ended_at: new Date().toISOString(),
       duration_ms: 0,
       accumulated_ms: 0,
-    } as any);
+    });
 
+    setTotalMs(0);
     clearStoredRunningStartMs();
     onFinishedOrCanceled();
   };
@@ -202,7 +201,7 @@ export default function ActiveStopwatch({
             {formatDuration(totalMs)}
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Status: {status}
+            Status: {formatStatusLabel(status)}
           </Typography.Text>
         </div>
       </div>

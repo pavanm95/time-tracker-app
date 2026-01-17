@@ -30,6 +30,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"],
-  "react/no-invalid-html-attribute": "error"
+  "exclude": ["node_modules"]
 }

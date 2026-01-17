@@ -1,8 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DownloadOutlined, EditOutlined } from "@ant-design/icons";
-import { Button, Modal, Pagination, Table, Tag, Typography } from "antd";
+import {
+  DownloadOutlined,
+  EditOutlined,
+  LoadingOutlined,
+} from "@ant-design/icons";
+import {
+  Button,
+  DatePicker,
+  Modal,
+  Pagination,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import type { RangePickerProps } from "antd/es/date-picker";
 import type { ColumnsType } from "antd/es/table";
 import * as XLSX from "xlsx";
 import { TaskRow } from "../types/task";
@@ -16,6 +30,7 @@ import { toast } from "../lib/toast";
 import EditTaskModal from "./EditTaskModal";
 
 const PAGE_SIZE = 20;
+const { RangePicker } = DatePicker;
 
 export default function HistoryTable({
   refreshKey,
@@ -36,8 +51,7 @@ export default function HistoryTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaskRow | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [tableScrollY, setTableScrollY] = useState(320);
-  const tableContainerRef = useRef<HTMLDivElement | null>(null);
+  const [dateRange, setDateRange] = useState<RangePickerProps["value"]>(null);
   const cacheRef = useRef<Map<string, { rows: TaskRow[]; total: number }>>(
     new Map(),
   );
@@ -57,41 +71,18 @@ export default function HistoryTable({
     canceled: "#0f172a",
     paused: "#475569",
   };
-  useEffect(() => {
-    const element = tableContainerRef.current;
-    if (!element) return;
-
-    const updateTableHeight = () => {
-      const rect = element.getBoundingClientRect();
-      const headerOffset = 56;
-      const next = Math.max(200, rect.height - headerOffset);
-      setTableScrollY(next);
-    };
-
-    updateTableHeight();
-    window.addEventListener("resize", updateTableHeight);
-
-    let observer: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => updateTableHeight());
-      observer.observe(element);
-    }
-
-    return () => {
-      window.removeEventListener("resize", updateTableHeight);
-      if (observer) observer.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    cacheRef.current.clear();
-    inFlightRef.current.clear();
-    setTableUnavailable(false);
-  }, [projectId, userId]);
+  const formatStatusLabel = (value: TaskRow["status"]) =>
+    value.charAt(0).toUpperCase() + value.slice(1);
+  const rangeKey = useMemo(() => {
+    if (!dateRange) return "all";
+    return dateRange
+      .map((value) => (value ? value.format("YYYY-MM-DD") : ""))
+      .join(":");
+  }, [dateRange]);
 
   const getCacheKey = () => {
     if (!projectId) return null;
-    return `${userId}:${projectId}:${page}:${refreshKey}`;
+    return `${userId}:${projectId}:${page}:${refreshKey}:${rangeKey}`;
   };
 
   const load = async () => {
@@ -129,11 +120,23 @@ export default function HistoryTable({
 
     setIsLoading(true);
 
-    const { data, count, error } = await supabaseBrowser
+    const startDate = dateRange?.[0]?.startOf("day") ?? null;
+    const endDate = dateRange?.[1]?.endOf("day") ?? null;
+
+    let query = supabaseBrowser
       .from("tasks")
       .select("*", { count: "exact" })
       .eq("project_id", projectId)
-      .eq("user_id", userId)
+      .eq("user_id", userId);
+
+    if (startDate) {
+      query = query.gte("started_at", startDate.toISOString());
+    }
+    if (endDate) {
+      query = query.lte("started_at", endDate.toISOString());
+    }
+
+    const { data, count, error } = await query
       .order("ended_at", { ascending: false })
       .range(from, to);
 
@@ -163,13 +166,9 @@ export default function HistoryTable({
   };
 
   useEffect(() => {
-    setPage(0);
-  }, [projectId]);
-
-  useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, refreshKey, projectId, userId]);
+  }, [page, refreshKey, projectId, userId, rangeKey]);
 
   const downloadExcel = () => {
     const exportRows = rows.map((r) => ({
@@ -180,7 +179,7 @@ export default function HistoryTable({
       EndedAt: r.ended_at ?? "",
       Duration: formatDuration(r.duration_ms),
       DurationMs: r.duration_ms,
-      Status: r.status,
+      Status: formatStatusLabel(r.status),
     }));
 
     const ws = XLSX.utils.json_to_sheet(exportRows);
@@ -286,38 +285,40 @@ export default function HistoryTable({
             borderRadius: 999,
           }}
         >
-          {value}
+          {formatStatusLabel(value)}
         </Tag>
       ),
     },
     {
-      title: "",
+      title: "Action",
       key: "edit",
       width: 60,
-      render: (_, record) => (
-        <Button
-          type="text"
-          icon={<EditOutlined />}
-          onClick={() => {
-            setEditingTask(record);
-            setModalOpen(true);
-          }}
-          aria-label="Edit"
-          title="Edit"
-        />
-      ),
+      render: (_, record) =>
+        record.status === "running" ? (
+          <Button
+            type="text"
+            icon={<LoadingOutlined spin />}
+            aria-label="Running"
+            title="Running"
+            disabled
+          />
+        ) : (
+          <Button
+            type="text"
+            icon={<EditOutlined />}
+            onClick={() => {
+              setEditingTask(record);
+              setModalOpen(true);
+            }}
+            aria-label="Edit"
+            title="Edit"
+          />
+        ),
     },
   ];
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        height: "100%",
-      }}
-    >
+    <div className="history-table">
       <div
         style={{
           display: "flex",
@@ -328,24 +329,43 @@ export default function HistoryTable({
         }}
       >
         <div>
-          <Typography.Title level={4} style={{ marginBottom: 0 }}>
-            Previous Task List{projectName ? ` - ${projectName}` : ""}
+          <Typography.Title level={5} style={{ marginBottom: 0 }}>
+            Task List{projectName ? ` - ${projectName}` : ""}
           </Typography.Title>
           <Typography.Text type="secondary">
             Showing {rows.length} of {total} tasks (page size {PAGE_SIZE}).
           </Typography.Text>
         </div>
 
-        <Button
-          icon={<DownloadOutlined />}
-          onClick={downloadExcel}
-          disabled={rows.length === 0}
-        >
-          Download Excel (this page)
-        </Button>
+        <Space size="middle" wrap>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={downloadExcel}
+            disabled={rows.length === 0}
+          >
+            Download Excel
+          </Button>
+          <RangePicker
+            value={dateRange}
+            onChange={(value) => {
+              setDateRange(value);
+              setPage(0);
+            }}
+            allowClear
+            format="YYYY-MM-DD"
+            placeholder={["Start date", "End date"]}
+          />
+          <Pagination
+            current={page + 1}
+            pageSize={PAGE_SIZE}
+            total={total}
+            showSizeChanger={false}
+            onChange={(nextPage) => setPage(nextPage - 1)}
+          />
+        </Space>
       </div>
 
-      <div ref={tableContainerRef} style={{ flex: 1, minHeight: 0 }}>
+      <div className="history-table__table">
         <Table
           rowKey="id"
           columns={columns}
@@ -353,7 +373,8 @@ export default function HistoryTable({
           loading={isLoading}
           pagination={false}
           size="middle"
-          scroll={{ y: tableScrollY }}
+          scroll={{ x: "max-content", y: "var(--history-table-body-height)" }}
+          sticky
           locale={{ emptyText: "No history yet." }}
           onRow={(record) => ({
             onContextMenu: (event) => {
@@ -365,26 +386,8 @@ export default function HistoryTable({
         />
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <Typography.Text type="secondary">
-          Page {page + 1} of {Math.max(1, totalPages)}
-        </Typography.Text>
-        <Pagination
-          current={page + 1}
-          pageSize={PAGE_SIZE}
-          total={total}
-          showSizeChanger={false}
-          onChange={(nextPage) => setPage(nextPage - 1)}
-        />
-      </div>
-
       <EditTaskModal
+        key={editingTask?.id ?? "none"}
         task={editingTask}
         open={modalOpen}
         onClose={() => {
@@ -423,7 +426,7 @@ export default function HistoryTable({
         }}
       >
         <Typography.Text>
-          Delete "{deleteTarget?.title}"? This cannot be undone.
+          Delete `{deleteTarget?.title}`? This cannot be undone.
         </Typography.Text>
       </Modal>
     </div>

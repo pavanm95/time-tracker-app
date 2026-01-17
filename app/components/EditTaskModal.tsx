@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Input, Modal, Space, Typography } from "antd";
 import { TaskRow } from "../types/task";
 import { supabaseBrowser } from "../lib/supabaseBrowser";
@@ -19,28 +19,17 @@ type Props = {
 };
 
 export default function EditTaskModal({ task, open, onClose, onSaved }: Props) {
-  const [mounted, setMounted] = useState(false);
-  const [title, setTitle] = useState("");
-  const [notes, setNotes] = useState("");
-  const [startedAt, setStartedAt] = useState("");
-  const [endedAt, setEndedAt] = useState("");
+  const [title, setTitle] = useState(() => task?.title ?? "");
+  const [notes, setNotes] = useState(() => task?.notes ?? "");
+  const [startedAt, setStartedAt] = useState(() =>
+    toLocalDateTimeInputValue(task?.started_at ?? null),
+  );
+  const [endedAt, setEndedAt] = useState(() =>
+    toLocalDateTimeInputValue(task?.ended_at ?? null),
+  );
   const [saving, setSaving] = useState(false);
 
-  // hydration guard
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // sync task -> local state
-  useEffect(() => {
-    if (!task) return;
-    setTitle(task.title);
-    setNotes(task.notes ?? "");
-    setStartedAt(toLocalDateTimeInputValue(task.started_at));
-    setEndedAt(toLocalDateTimeInputValue(task.ended_at));
-  }, [task]);
-
-  if (!mounted || !open || !task) return null;
+  if (!open || !task) return null;
 
   const save = async () => {
     const t = title.trim();
@@ -85,7 +74,7 @@ export default function EditTaskModal({ task, open, onClose, onSaved }: Props) {
   return (
     <Modal
       title="Edit Task"
-      open={open && mounted && !!task}
+      open={open && !!task}
       onCancel={onClose}
       footer={
         <Space>

@@ -8,6 +8,7 @@ import {
   Card,
   Input,
   Layout,
+  List,
   Modal,
   Select,
   Space,
@@ -56,11 +57,20 @@ export default function Page() {
   const [profileUsername, setProfileUsername] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
-  const [projectsUnavailable, setProjectsUnavailable] = useState(false);
+  const projectsUnavailableRef = useRef(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [manageProjectsOpen, setManageProjectsOpen] = useState(false);
+  const [manageProjectsLoading, setManageProjectsLoading] = useState(false);
+  const [projectTaskCounts, setProjectTaskCounts] = useState<
+    Record<string, number>
+  >({});
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [editingProjectName, setEditingProjectName] = useState("");
+  const [savingProjectId, setSavingProjectId] = useState<string | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [activeTask, setActiveTask] = useState<TaskRow | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const projectsCacheRef = useRef<{
@@ -152,7 +162,7 @@ export default function Page() {
 
   useEffect(() => {
     const loadProjects = async () => {
-      if (!user || projectsUnavailable) return;
+      if (!user || projectsUnavailableRef.current) return;
       const cache = projectsCacheRef.current;
       if (cache?.userId === user.id) {
         applyProjects(cache.projects);
@@ -175,7 +185,7 @@ export default function Page() {
       if (error) {
         toast.error(friendlySupabaseError(error.message));
         if (isMissingTableError(error.message)) {
-          setProjectsUnavailable(true);
+          projectsUnavailableRef.current = true;
           applyProjects([]);
         }
         return;
@@ -187,10 +197,10 @@ export default function Page() {
     };
 
     loadProjects();
-  }, [user, projectsUnavailable, applyProjects]);
+  }, [user, applyProjects]);
 
   useEffect(() => {
-    setProjectsUnavailable(false);
+    projectsUnavailableRef.current = false;
     projectsCacheRef.current = null;
     projectsInFlightRef.current = null;
     profileCacheRef.current = null;
@@ -232,13 +242,6 @@ export default function Page() {
 
     loadProfile();
   }, [user]);
-
-  useEffect(() => {
-    if (projectsLoading) return;
-    if (user && projects.length === 0) {
-      setCreateProjectOpen(false);
-    }
-  }, [projectsLoading, projects.length, user]);
 
   useEffect(() => {
     const loadActiveTask = async () => {
@@ -334,7 +337,7 @@ export default function Page() {
     if (error) {
       toast.error(friendlySupabaseError(error.message));
       if (isMissingTableError(error.message)) {
-        setProjectsUnavailable(true);
+        projectsUnavailableRef.current = true;
       }
       return;
     }
@@ -352,6 +355,130 @@ export default function Page() {
     setCreateProjectOpen(false);
     setNewProjectName("");
     toast.success("Project created.");
+  };
+
+  const loadProjectTaskCounts = async () => {
+    if (!user) return;
+    setManageProjectsLoading(true);
+    const results = await Promise.all(
+      projects.map(async (project) => {
+        const { count, error } = await supabaseBrowser
+          .from("tasks")
+          .select("id", { count: "exact", head: true })
+          .eq("project_id", project.id)
+          .eq("user_id", user.id);
+        return {
+          id: project.id,
+          count: count ?? 0,
+          error,
+        };
+      }),
+    );
+
+    let firstError: string | null = null;
+    const nextCounts: Record<string, number> = {};
+    results.forEach((result) => {
+      if (result.error && !firstError) {
+        firstError = result.error.message;
+      }
+      nextCounts[result.id] = result.error ? 0 : result.count ?? 0;
+    });
+
+    if (firstError) {
+      toast.error(friendlySupabaseError(firstError));
+    }
+
+    setProjectTaskCounts(nextCounts);
+    setManageProjectsLoading(false);
+  };
+
+  const openManageProjects = () => {
+    setEditingProjectId(null);
+    setEditingProjectName("");
+    setManageProjectsOpen(true);
+    loadProjectTaskCounts();
+  };
+
+  const closeManageProjects = () => {
+    setManageProjectsOpen(false);
+    setEditingProjectId(null);
+    setEditingProjectName("");
+  };
+
+  const startEditProject = (project: ProjectRow) => {
+    setEditingProjectId(project.id);
+    setEditingProjectName(project.name);
+  };
+
+  const cancelEditProject = () => {
+    setEditingProjectId(null);
+    setEditingProjectName("");
+  };
+
+  const saveProject = async (projectId: string) => {
+    const name = editingProjectName.trim();
+    if (!name || !user) {
+      toast.error("Project name is required.");
+      return;
+    }
+
+    setSavingProjectId(projectId);
+    const { data, error } = await supabaseBrowser
+      .from("projects")
+      .update({ name })
+      .eq("id", projectId)
+      .eq("user_id", user.id)
+      .select("*")
+      .single();
+    setSavingProjectId(null);
+
+    if (error) {
+      toast.error(friendlySupabaseError(error.message));
+      return;
+    }
+
+    const updated = data as ProjectRow;
+    const nextProjects = projects.map((project) =>
+      project.id === projectId ? updated : project,
+    );
+    setProjects(nextProjects);
+    projectsCacheRef.current = { userId: user.id, projects: nextProjects };
+    cancelEditProject();
+    toast.success("Project updated.");
+  };
+
+  const deleteProject = async (project: ProjectRow) => {
+    if (!user) return;
+    const taskCount = projectTaskCounts[project.id] ?? 0;
+    if (taskCount > 0) return;
+
+    setDeletingProjectId(project.id);
+    const { error } = await supabaseBrowser
+      .from("projects")
+      .delete()
+      .eq("id", project.id)
+      .eq("user_id", user.id);
+    setDeletingProjectId(null);
+
+    if (error) {
+      toast.error(friendlySupabaseError(error.message));
+      return;
+    }
+
+    const nextProjects = projects.filter(
+      (existing) => existing.id !== project.id,
+    );
+    projectsCacheRef.current = { userId: user.id, projects: nextProjects };
+    applyProjects(nextProjects);
+    setProjectTaskCounts((prev) => {
+      const next = { ...prev };
+      delete next[project.id];
+      return next;
+    });
+    if (editingProjectId === project.id) {
+      cancelEditProject();
+    }
+    toast.success("Project deleted.");
   };
 
   const handleProjectChange = (nextProjectId: string) => {
@@ -372,6 +499,7 @@ export default function Page() {
     setActiveProjectId(null);
     setProjects([]);
     setProfileUsername(null);
+    projectsUnavailableRef.current = false;
     projectsCacheRef.current = null;
     projectsInFlightRef.current = null;
     profileCacheRef.current = null;
@@ -431,69 +559,53 @@ export default function Page() {
           />
         </Space>
       </Layout.Header>
-      <Layout.Content
-        style={{ padding: 24, height: "100%", overflow: "hidden" }}
-      >
-        <div
-          style={{
-            maxWidth: 1200,
-            margin: "0 auto",
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              gap: 16,
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <Typography.Title level={4} style={{ marginBottom: 4 }}>
-                Project Overview
-              </Typography.Title>
-              <Typography.Text type="secondary">
-                Track tasks with a stopwatch. Keeps the task running so you can
-                continue later.
-              </Typography.Text>
-            </div>
-
-            <Space size="middle" wrap>
-              <div>
-                <Typography.Text type="secondary" className="mr-4">
-                  Project
-                </Typography.Text>
+      <Layout.Content className="page-content">
+        <div className="dashboard">
+          <div className="dashboard-top">
+            <div className="overview-stack">
+              <div className="overview-panel">
+                <div className="overview-row">
+                  <Typography.Title level={5} className="overview-title">
+                    Projects
+                  </Typography.Title>
                 <Select
-                  style={{ minWidth: 220 }}
+                  className="overview-select"
                   placeholder="Select project"
                   loading={projectsLoading}
                   value={activeProjectId ?? undefined}
+                  disabled={activeTask?.status === "running"}
                   options={projects.map((project) => ({
                     label: project.name,
                     value: project.id,
                   }))}
                   onChange={handleProjectChange}
                 />
-              </div>
-              <Button onClick={() => setCreateProjectOpen(true)}>
+              <Button
+                onClick={() => setCreateProjectOpen(true)}
+                disabled={activeTask?.status === "running"}
+              >
                 New Project
               </Button>
-            </Space>
-          </div>
+              <Button
+                onClick={openManageProjects}
+                disabled={activeTask?.status === "running"}
+              >
+                Manage Projects
+              </Button>
+            </div>
+            </div>
 
-          <Card>
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <TaskComposer
-                onCreated={onTaskCreated}
-                disabled={!!activeTask}
-                projectId={activeProjectId}
-                userId={user.id}
-              />
+              <Card className="task-card">
+                <TaskComposer
+                  onCreated={onTaskCreated}
+                  disabled={!!activeTask}
+                  projectId={activeProjectId}
+                  userId={user.id}
+                />
+              </Card>
+            </div>
+
+            <Card className="stopwatch-card">
               {activeTask ? (
                 <ActiveStopwatch
                   task={activeTask}
@@ -507,11 +619,11 @@ export default function Page() {
                     : "Create a project to begin tracking tasks."}
                 </Typography.Text>
               )}
-            </Space>
-          </Card>
+            </Card>
+          </div>
 
           <Card
-            style={{ flex: 1, minHeight: 0 }}
+            className="history-card"
             styles={{
               body: {
                 height: "100%",
@@ -521,6 +633,7 @@ export default function Page() {
             }}
           >
             <HistoryTable
+              key={`${user.id}:${activeProjectId ?? "none"}`}
               refreshKey={refreshKey}
               projectId={activeProjectId}
               projectName={activeProject?.name ?? null}
@@ -545,6 +658,97 @@ export default function Page() {
           placeholder="Project name"
           value={newProjectName}
           onChange={(event) => setNewProjectName(event.target.value)}
+        />
+      </Modal>
+
+      <Modal
+        title="Manage Projects"
+        open={manageProjectsOpen}
+        onCancel={closeManageProjects}
+        footer={null}
+      >
+        <List
+          dataSource={projects}
+          locale={{ emptyText: "No projects yet." }}
+          loading={manageProjectsLoading}
+          renderItem={(project) => {
+            const isEditing = editingProjectId === project.id;
+            const taskCount = projectTaskCounts[project.id];
+            const taskCountLabel =
+              typeof taskCount === "number" ? taskCount : "...";
+            const canDelete =
+              typeof taskCount === "number" &&
+              taskCount === 0 &&
+              !manageProjectsLoading;
+            return (
+              <List.Item>
+                <div className="project-modal__row">
+                  <div className="project-modal__info">
+                    {isEditing ? (
+                      <Input
+                        value={editingProjectName}
+                        onChange={(event) =>
+                          setEditingProjectName(event.target.value)
+                        }
+                        onPressEnter={() => saveProject(project.id)}
+                      />
+                    ) : (
+                      <Typography.Text strong>{project.name}</Typography.Text>
+                    )}
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Tasks: {taskCountLabel}
+                    </Typography.Text>
+                  </div>
+
+                  <div className="project-modal__actions">
+                    {isEditing ? (
+                      <>
+                        <Button
+                          type="primary"
+                          size="small"
+                          onClick={() => saveProject(project.id)}
+                          loading={savingProjectId === project.id}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={cancelEditProject}
+                          disabled={savingProjectId === project.id}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          size="small"
+                          onClick={() => startEditProject(project)}
+                          disabled={manageProjectsLoading}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          danger
+                          size="small"
+                          onClick={() => deleteProject(project)}
+                          disabled={!canDelete}
+                          loading={deletingProjectId === project.id}
+                          title={
+                            canDelete
+                              ? "Delete project"
+                              : "Delete disabled while tasks exist."
+                          }
+                        >
+                          Delete
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </List.Item>
+            );
+          }}
         />
       </Modal>
     </Layout>

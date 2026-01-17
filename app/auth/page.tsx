@@ -142,6 +142,40 @@ export default function AuthPage() {
           style={{ marginTop: 16 }}
           items={[
             {
+              key: "login",
+              label: "Log In",
+              children: (
+                <Form layout="vertical" onFinish={signIn} requiredMark={false}>
+                  <Form.Item
+                    label="Username"
+                    name="username"
+                    rules={[
+                      { required: true, message: "Username is required." },
+                    ]}
+                  >
+                    <Input placeholder="e.g. username" autoComplete="username" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Password"
+                    name="password"
+                    rules={[
+                      { required: true, message: "Password is required." },
+                    ]}
+                  >
+                    <Input.Password autoComplete="current-password" />
+                  </Form.Item>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={loading}
+                    style={{ width: "100%" }}
+                  >
+                    Log In
+                  </Button>
+                </Form>
+              ),
+            },
+            {
               key: "signup",
               label: "Sign Up",
               children: (
@@ -153,7 +187,7 @@ export default function AuthPage() {
                       { required: true, message: "Username is required." },
                     ]}
                   >
-                    <Input placeholder="e.g., pavan" autoComplete="username" />
+                    <Input placeholder="e.g. username" autoComplete="username" />
                   </Form.Item>
                   <Form.Item
                     label="Password"
@@ -175,40 +209,6 @@ export default function AuthPage() {
                     style={{ width: "100%" }}
                   >
                     Sign Up
-                  </Button>
-                </Form>
-              ),
-            },
-            {
-              key: "login",
-              label: "Log In",
-              children: (
-                <Form layout="vertical" onFinish={signIn} requiredMark={false}>
-                  <Form.Item
-                    label="Username"
-                    name="username"
-                    rules={[
-                      { required: true, message: "Username is required." },
-                    ]}
-                  >
-                    <Input placeholder="e.g., pavan" autoComplete="username" />
-                  </Form.Item>
-                  <Form.Item
-                    label="Password"
-                    name="password"
-                    rules={[
-                      { required: true, message: "Password is required." },
-                    ]}
-                  >
-                    <Input.Password autoComplete="current-password" />
-                  </Form.Item>
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    loading={loading}
-                    style={{ width: "100%" }}
-                  >
-                    Log In
                   </Button>
                 </Form>
               ),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Col, Input, Row, Space, Typography } from "antd";
+import { Button, Input, Space, Typography } from "antd";
 import { TaskRow } from "../types/task";
 import { supabaseBrowser } from "../lib/supabaseBrowser";
 import { friendlySupabaseError } from "../lib/supabaseErrors";
@@ -56,53 +56,50 @@ export default function TaskComposer({
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <Row gutter={16}>
-        <Col span={12}>
-          <Space direction="vertical" size={4} style={{ width: "100%" }}>
-            <Typography.Text>Task</Typography.Text>
-            <Input
-              placeholder="e.g., Implement history pagination"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={disabled || isSaving}
-            />
-          </Space>
-        </Col>
-        <Col span={12}>
-          <Space direction="vertical" size={4} style={{ width: "100%" }}>
-            <Typography.Text>Notes</Typography.Text>
-            <Input
-              placeholder="Optional"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              disabled={disabled || isSaving}
-            />
-          </Space>
-        </Col>
-      </Row>
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+        <Typography.Text>Task</Typography.Text>
+        <Input
+          placeholder="e.g., Implement history pagination"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          disabled={disabled || isSaving}
+        />
+      </Space>
 
-      <Button
-        type="primary"
-        style={{
-          backgroundColor: "#D73535",
-          borderColor: "#D73535",
-          color: "#fff",
-        }}
-        onClick={createTask}
-        disabled={disabled || isSaving || !title.trim() || !projectId}
-      >
-        Start Task
-      </Button>
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+        <Typography.Text>Notes</Typography.Text>
+        <Input
+          placeholder="Optional"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          disabled={disabled || isSaving}
+        />
+      </Space>
 
-      {disabled ? (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Finish or cancel the active task before starting a new one.
-        </Typography.Text>
-      ) : !projectId ? (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Create and select a project to start tracking tasks.
-        </Typography.Text>
-      ) : null}
+      <div className="task-composer__footer">
+        <Button
+          type="primary"
+          style={{
+            backgroundColor: "#4988C4",
+            borderColor: "#4988C4",
+            color: "#fff",
+          }}
+          onClick={createTask}
+          disabled={disabled || isSaving || !title.trim() || !projectId}
+        >
+          Start Task
+        </Button>
+
+        {disabled ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Finish or cancel the active task before starting a new one.
+          </Typography.Text>
+        ) : !projectId ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Create and select a project to start tracking tasks.
+          </Typography.Text>
+        ) : null}
+      </div>
     </Space>
   );
 }
