@@ -58,7 +58,6 @@ export default function HistoryTable({
   const inFlightRef = useRef<Set<string>>(new Set());
   const [tableUnavailable, setTableUnavailable] = useState(false);
 
-  const totalPages = useMemo(() => Math.ceil(total / PAGE_SIZE), [total]);
   const statusTagColors: Record<TaskRow["status"], string> = {
     running: "#D73535",
     finished: "#007E6E",
