@@ -44,6 +44,12 @@ const clearStoredRunningStartMs = () => {
   localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
 };
 
+const parseIsoMs = (value?: string | null) => {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 export default function ActiveStopwatch({
   task,
   onUpdated,
@@ -58,8 +64,11 @@ export default function ActiveStopwatch({
     task.accumulated_ms || 0,
   );
   const [totalMs, setTotalMs] = useState<number>(task.accumulated_ms || 0);
+  const [pauseCount, setPauseCount] = useState<number>(task.pause_count ?? 0);
+  const [pausedMs, setPausedMs] = useState<number>(task.paused_ms ?? 0);
 
   const runningStartRef = useRef<number>(nowMs()); // when current running slice began
+  const pausedAtRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -80,6 +89,19 @@ export default function ActiveStopwatch({
 
     writeStoredRunningStartMs(task.id, runningStartRef.current);
   }, [status, task.id, task.updated_at, task.started_at]);
+
+  useEffect(() => {
+    if (status !== "paused") {
+      pausedAtRef.current = null;
+      return;
+    }
+    if (pausedAtRef.current !== null) return;
+    const pausedAtMs =
+      parseIsoMs(task.paused_at) ??
+      parseIsoMs(task.updated_at) ??
+      parseIsoMs(task.started_at);
+    pausedAtRef.current = pausedAtMs ?? nowMs();
+  }, [status, task.paused_at, task.updated_at, task.started_at]);
 
   // ticking
   useEffect(() => {
@@ -118,61 +140,94 @@ export default function ActiveStopwatch({
 
     const sliceMs = nowMs() - runningStartRef.current;
     const nextAccum = accumulatedMs + sliceMs;
+    const nextPauseCount = pauseCount + 1;
+    const pauseStartedMs = nowMs();
 
     setAccumulatedMs(nextAccum);
     setTotalMs(nextAccum);
     setStatus("paused");
+    setPauseCount(nextPauseCount);
+    pausedAtRef.current = pauseStartedMs;
     clearStoredRunningStartMs();
 
     await persist({
       status: "paused",
       accumulated_ms: Math.floor(nextAccum),
+      pause_count: nextPauseCount,
+      paused_ms: Math.floor(pausedMs),
+      paused_at: new Date(pauseStartedMs).toISOString(),
     });
   };
 
   const resume = async () => {
     if (status !== "paused") return;
 
+    const pauseSliceMs =
+      pausedAtRef.current !== null ? nowMs() - pausedAtRef.current : 0;
+    const nextPausedMs = pausedMs + pauseSliceMs;
+
     runningStartRef.current = nowMs();
     writeStoredRunningStartMs(task.id, runningStartRef.current);
     setTotalMs(accumulatedMs);
     setStatus("running");
+    setPausedMs(nextPausedMs);
+    pausedAtRef.current = null;
 
     await persist({
       status: "running",
       // keep accumulated as-is
       accumulated_ms: Math.floor(accumulatedMs),
+      paused_ms: Math.floor(nextPausedMs),
+      paused_at: null,
     });
   };
 
   const finish = async () => {
+    const now = nowMs();
     const finalMs =
       status === "running"
-        ? accumulatedMs + (nowMs() - runningStartRef.current)
+        ? accumulatedMs + (now - runningStartRef.current)
         : accumulatedMs;
+    const pauseSliceMs =
+      status === "paused" && pausedAtRef.current !== null
+        ? now - pausedAtRef.current
+        : 0;
+    const finalPausedMs = pausedMs + pauseSliceMs;
 
     await persist({
       status: "finished",
       ended_at: new Date().toISOString(),
       duration_ms: Math.floor(finalMs),
       accumulated_ms: Math.floor(finalMs),
+      paused_ms: Math.floor(finalPausedMs),
+      paused_at: null,
     });
 
     setTotalMs(finalMs);
+    setPausedMs(finalPausedMs);
     clearStoredRunningStartMs();
     onFinishedOrCanceled();
   };
 
   const cancel = async () => {
     // requirement: cancel option
+    const now = nowMs();
+    const pauseSliceMs =
+      status === "paused" && pausedAtRef.current !== null
+        ? now - pausedAtRef.current
+        : 0;
+    const finalPausedMs = pausedMs + pauseSliceMs;
     await persist({
       status: "canceled",
       ended_at: new Date().toISOString(),
       duration_ms: 0,
       accumulated_ms: 0,
+      paused_ms: Math.floor(finalPausedMs),
+      paused_at: null,
     });
 
     setTotalMs(0);
+    setPausedMs(finalPausedMs);
     clearStoredRunningStartMs();
     onFinishedOrCanceled();
   };

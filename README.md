@@ -82,6 +82,9 @@ create table if not exists public.tasks (
   ended_at timestamptz,
   accumulated_ms bigint not null default 0,
   duration_ms bigint not null default 0,
+  pause_count integer not null default 0,
+  paused_ms bigint not null default 0,
+  paused_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

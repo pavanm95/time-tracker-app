@@ -9,6 +9,7 @@ import {
 import {
   Button,
   DatePicker,
+  Descriptions,
   Modal,
   Pagination,
   Space,
@@ -51,11 +52,18 @@ export default function HistoryTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaskRow | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [viewTask, setViewTask] = useState<TaskRow | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    task: TaskRow;
+    x: number;
+    y: number;
+  } | null>(null);
   const [dateRange, setDateRange] = useState<RangePickerProps["value"]>(null);
   const cacheRef = useRef<Map<string, { rows: TaskRow[]; total: number }>>(
     new Map(),
   );
   const inFlightRef = useRef<Set<string>>(new Set());
+  const activeRequestRef = useRef<string | null>(null);
   const [tableUnavailable, setTableUnavailable] = useState(false);
 
   const statusTagColors: Record<TaskRow["status"], string> = {
@@ -72,6 +80,21 @@ export default function HistoryTable({
   };
   const formatStatusLabel = (value: TaskRow["status"]) =>
     value.charAt(0).toUpperCase() + value.slice(1);
+  const getPauseCount = (task: TaskRow) => Math.max(0, task.pause_count ?? 0);
+  const getPausedMs = (task: TaskRow) => {
+    const baseMs = Math.max(0, task.paused_ms ?? 0);
+    if (task.status !== "paused") return baseMs;
+    const pausedAt = task.paused_at ?? task.updated_at ?? task.started_at;
+    const pausedAtMs = pausedAt ? new Date(pausedAt).getTime() : NaN;
+    if (Number.isNaN(pausedAtMs)) return baseMs;
+    return Math.max(0, baseMs + (Date.now() - pausedAtMs));
+  };
+  const getDisplayDurationMs = (task: TaskRow) =>
+    ["finished", "canceled"].includes(task.status)
+      ? task.duration_ms
+      : task.accumulated_ms;
+  const canDeleteTask = (task: TaskRow) =>
+    ["finished", "canceled"].includes(task.status);
   const rangeKey = useMemo(() => {
     if (!dateRange) return "all";
     return dateRange
@@ -89,10 +112,12 @@ export default function HistoryTable({
       setIsLoading(false);
       setRows([]);
       setTotal(0);
+      activeRequestRef.current = null;
       return;
     }
     if (tableUnavailable) {
       setIsLoading(false);
+      activeRequestRef.current = null;
       return;
     }
 
@@ -107,6 +132,7 @@ export default function HistoryTable({
         setIsLoading(false);
         setRows(cached.rows);
         setTotal(cached.total);
+        activeRequestRef.current = null;
         return;
       }
 
@@ -115,6 +141,7 @@ export default function HistoryTable({
       }
 
       inFlightRef.current.add(cacheKey);
+      activeRequestRef.current = cacheKey;
     }
 
     setIsLoading(true);
@@ -139,6 +166,11 @@ export default function HistoryTable({
       .order("ended_at", { ascending: false })
       .range(from, to);
 
+    if (cacheKey && activeRequestRef.current !== cacheKey) {
+      inFlightRef.current.delete(cacheKey);
+      return;
+    }
+
     setIsLoading(false);
     if (cacheKey) {
       inFlightRef.current.delete(cacheKey);
@@ -151,6 +183,9 @@ export default function HistoryTable({
         setRows([]);
         setTotal(0);
       }
+      if (cacheKey && activeRequestRef.current === cacheKey) {
+        activeRequestRef.current = null;
+      }
       return;
     }
 
@@ -161,6 +196,9 @@ export default function HistoryTable({
         rows: (data as TaskRow[]) ?? [],
         total: count ?? 0,
       });
+      if (activeRequestRef.current === cacheKey) {
+        activeRequestRef.current = null;
+      }
     }
   };
 
@@ -168,6 +206,29 @@ export default function HistoryTable({
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, refreshKey, projectId, userId, rangeKey]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (event.button !== 2) {
+        setContextMenu(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+    const handleScroll = () => setContextMenu(null);
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleScroll);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleScroll);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [contextMenu]);
 
   const downloadExcel = () => {
     const exportRows = rows.map((r) => ({
@@ -178,6 +239,9 @@ export default function HistoryTable({
       EndedAt: r.ended_at ?? "",
       Duration: formatDuration(r.duration_ms),
       DurationMs: r.duration_ms,
+      PauseCount: getPauseCount(r),
+      Paused: formatDuration(getPausedMs(r)),
+      PausedMs: getPausedMs(r),
       Status: formatStatusLabel(r.status),
     }));
 
@@ -189,6 +253,10 @@ export default function HistoryTable({
   };
 
   const deleteTask = async (task: TaskRow) => {
+    if (!canDeleteTask(task)) {
+      toast.error("Only finished or canceled tasks can be deleted.");
+      return;
+    }
     const { error } = await supabaseBrowser
       .from("tasks")
       .delete()
@@ -316,6 +384,30 @@ export default function HistoryTable({
     },
   ];
 
+  const getContextMenuPosition = (x: number, y: number) => {
+    const menuWidth = 180;
+    const menuHeight = 84;
+    const padding = 8;
+    const maxX = window.innerWidth - menuWidth - padding;
+    const maxY = window.innerHeight - menuHeight - padding;
+    return {
+      x: Math.max(padding, Math.min(x, maxX)),
+      y: Math.max(padding, Math.min(y, maxY)),
+    };
+  };
+
+  const openView = (task: TaskRow) => {
+    setViewTask(task);
+    setContextMenu(null);
+  };
+
+  const openDelete = (task: TaskRow) => {
+    if (!canDeleteTask(task)) return;
+    setDeleteTarget(task);
+    setDeleteModalOpen(true);
+    setContextMenu(null);
+  };
+
   return (
     <div className="history-table">
       <div
@@ -378,12 +470,52 @@ export default function HistoryTable({
           onRow={(record) => ({
             onContextMenu: (event) => {
               event.preventDefault();
-              setDeleteTarget(record);
-              setDeleteModalOpen(true);
+              const position = getContextMenuPosition(
+                event.clientX,
+                event.clientY,
+              );
+              setContextMenu({ task: record, ...position });
             },
           })}
         />
       </div>
+
+      {contextMenu ? (
+        <div
+          role="menu"
+          aria-label="Task actions"
+          style={{
+            position: "fixed",
+            top: contextMenu.y,
+            left: contextMenu.x,
+            zIndex: 1000,
+            background: "#ffffff",
+            borderRadius: 8,
+            boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)",
+            padding: 4,
+            minWidth: 160,
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Button
+            type="text"
+            style={{ width: "100%", textAlign: "left" }}
+            onClick={() => openView(contextMenu.task)}
+          >
+            View
+          </Button>
+          <Button
+            type="text"
+            danger
+            style={{ width: "100%", textAlign: "left" }}
+            disabled={!canDeleteTask(contextMenu.task)}
+            onClick={() => openDelete(contextMenu.task)}
+          >
+            Delete
+          </Button>
+        </div>
+      ) : null}
 
       <EditTaskModal
         key={editingTask?.id ?? "none"}
@@ -399,6 +531,63 @@ export default function HistoryTable({
           );
         }}
       />
+
+      <Modal
+        title="Task Details"
+        open={!!viewTask}
+        onCancel={() => setViewTask(null)}
+        footer={
+          <Button
+            type="primary"
+            style={{ backgroundColor: "#007E6E", borderColor: "#007E6E" }}
+            onClick={() => setViewTask(null)}
+          >
+            Close
+          </Button>
+        }
+      >
+        {viewTask ? (
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label="Title">
+              {viewTask.title}
+            </Descriptions.Item>
+            <Descriptions.Item label="Notes">
+              {viewTask.notes ?? "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Status">
+              <Tag
+                color={statusTagColors[viewTask.status]}
+                style={{
+                  color: statusTextColors[viewTask.status],
+                  border: "none",
+                  borderRadius: 999,
+                }}
+              >
+                {formatStatusLabel(viewTask.status)}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Started">
+              {formatDateTimeYmdHms(viewTask.started_at)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Ended">
+              {formatDateTimeYmdHms(viewTask.ended_at)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Duration">
+              <span style={{ fontFamily: "var(--font-geist-mono)" }}>
+                {formatDuration(getDisplayDurationMs(viewTask))}
+              </span>
+            </Descriptions.Item>
+            <Descriptions.Item label="Pause Count">
+              {getPauseCount(viewTask)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Paused Time">
+              <span style={{ fontFamily: "var(--font-geist-mono)" }}>
+                {formatDuration(getPausedMs(viewTask))}
+              </span>
+            </Descriptions.Item>
+          </Descriptions>
+        ) : null}
+      </Modal>
 
       <Modal
         title="Delete Task"

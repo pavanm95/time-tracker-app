@@ -608,6 +608,7 @@ export default function Page() {
             <Card className="stopwatch-card">
               {activeTask ? (
                 <ActiveStopwatch
+                  key={activeTask.id}
                   task={activeTask}
                   onUpdated={onTaskUpdated}
                   onFinishedOrCanceled={onTaskEndedOrCanceled}

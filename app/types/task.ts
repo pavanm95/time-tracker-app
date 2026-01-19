@@ -11,6 +11,9 @@ export type TaskRow = {
   ended_at: string | null;
   accumulated_ms: number;
   duration_ms: number;
+  pause_count?: number | null;
+  paused_ms?: number | null;
+  paused_at?: string | null;
   created_at: string;
   updated_at: string;
 };
