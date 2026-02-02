@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 type ProfilePayload = {
   userId: string;
   username: string;
+  fullName?: string | null;
 };
 
 export async function POST(req: Request) {
@@ -11,6 +12,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as ProfilePayload;
     const userId = body?.userId?.trim();
     const username = body?.username?.trim().toLowerCase();
+    const fullName = body?.fullName?.trim() ?? null;
 
     if (!userId || !username) {
       return NextResponse.json(
@@ -43,6 +45,7 @@ export async function POST(req: Request) {
       const { error } = await supabaseAdmin.from("user_profiles").insert({
         id: userId,
         username,
+        full_name: fullName,
       });
 
       if (error) {

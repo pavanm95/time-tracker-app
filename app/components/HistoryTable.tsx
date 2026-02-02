@@ -45,11 +45,13 @@ export default function HistoryTable({
   projectId,
   projectName,
   userId,
+  userDisplayName,
 }: {
   refreshKey: number;
   projectId: string | null;
   projectName: string | null;
   userId: string;
+  userDisplayName: string;
 }) {
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<TaskRow[]>([]);
@@ -300,41 +302,195 @@ export default function HistoryTable({
   }, [contextMenu]);
 
   const downloadExcel = () => {
-    const exportRows: Array<Record<string, string | number>> = rows.map(
-      (r) => ({
-      Title: r.title,
-      Project: projectName ?? "",
-      Notes: r.notes ?? "",
-      StartedAt: formatDateTimeYdmHms(r.started_at),
-      EndedAt: formatDateTimeYdmHms(r.ended_at),
-      Duration: formatDuration(r.duration_ms),
-      PauseCount: getPauseCount(r),
-      Paused: formatDuration(getPausedMs(r)),
-      Status: formatStatusLabel(r.status),
-      }),
-    );
+    const exportColumns = [
+      "Title",
+      "Notes",
+      "StartedAt",
+      "EndedAt",
+      "Duration",
+      "IsPaused",
+      "Status",
+    ];
+
+    const exportRows = rows.map((r) => [
+      r.title,
+      r.notes ?? "",
+      formatDateTimeYmdHms(r.started_at),
+      formatDateTimeYmdHms(r.ended_at),
+      formatDuration(r.duration_ms),
+      getPauseCount(r) > 0 ? "Yes" : "No",
+      formatStatusLabel(r.status),
+    ]);
 
     const totalDurationMs = rows.reduce(
       (sum, row) => sum + Math.max(0, row.duration_ms ?? 0),
       0,
     );
-    exportRows.push({
-      Title: "Total",
-      Project: "",
-      Notes: "",
-      StartedAt: "",
-      EndedAt: "",
-      Duration: formatDuration(totalDurationMs),
-      PauseCount: "",
-      Paused: "",
-      Status: "",
+    const totalRow = [
+      "Total Duration",
+      "",
+      "",
+      "",
+      formatDuration(totalDurationMs),
+      "",
+    ];
+
+    const downloadDate = (() => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    })();
+
+    const rangeText = (() => {
+      const start = dateRange?.[0]?.format("YYYY-MM-DD") ?? "";
+      const end = dateRange?.[1]?.format("YYYY-MM-DD") ?? "";
+      if (start && end) return `Date Range: ${start} to ${end}`;
+      if (start) return `Date Range: from ${start}`;
+      if (end) return `Date Range: until ${end}`;
+
+      if (rows.length === 0) return "Date Range: -";
+      const minMax = rows.reduce(
+        (acc, row) => {
+          const startedAt = row.started_at
+            ? new Date(row.started_at).getTime()
+            : NaN;
+          if (Number.isNaN(startedAt)) return acc;
+          return {
+            min: Math.min(acc.min, startedAt),
+            max: Math.max(acc.max, startedAt),
+          };
+        },
+        { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY },
+      );
+
+      if (
+        !Number.isFinite(minMax.min) ||
+        !Number.isFinite(minMax.max) ||
+        minMax.min === Number.POSITIVE_INFINITY ||
+        minMax.max === Number.NEGATIVE_INFINITY
+      ) {
+        return "Date Range: -";
+      }
+
+      const formatDate = (value: number) => {
+        const date = new Date(value);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      };
+
+      return `Date Range: ${formatDate(minMax.min)} to ${formatDate(minMax.max)}`;
+    })();
+    const titleText = `${projectName ?? "Project"} - ${
+      userDisplayName || "User"
+    }`;
+
+    const columnCount = exportColumns.length;
+    const padRow = (row: Array<string | number>) => {
+      const padded = [...row];
+      while (padded.length < columnCount) padded.push("");
+      return padded;
+    };
+
+    const sheetRows: Array<Array<string | number>> = [];
+    sheetRows.push(padRow([titleText]));
+    sheetRows.push(padRow([rangeText]));
+    sheetRows.push(padRow([]));
+    const headerRowIndex = sheetRows.length;
+    sheetRows.push(padRow(exportColumns));
+    sheetRows.push(padRow([]));
+    sheetRows.push(...exportRows.map((row) => padRow(row)));
+    sheetRows.push(padRow([]));
+    const totalRowIndex = sheetRows.length;
+    sheetRows.push(padRow(totalRow));
+    sheetRows.push(padRow([]));
+    const signatureRowIndex = sheetRows.length;
+    sheetRows.push(padRow([`Downloaded Date - ${downloadDate}`]));
+
+    const ws = XLSX.utils.aoa_to_sheet(sheetRows);
+    const lastColumnIndex = columnCount - 1;
+
+    const merges = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumnIndex } },
+      {
+        s: { r: signatureRowIndex, c: 0 },
+        e: { r: signatureRowIndex, c: lastColumnIndex },
+      },
+    ];
+
+    merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: lastColumnIndex } });
+
+    ws["!merges"] = merges;
+
+    const applyBoldRow = (rowIndex: number) => {
+      for (let c = 0; c < columnCount; c += 1) {
+        const cellRef = XLSX.utils.encode_cell({ r: rowIndex, c });
+        const cell = ws[cellRef];
+        if (!cell) continue;
+        cell.s = {
+          ...(cell.s ?? {}),
+          font: { ...(cell.s?.font ?? {}), bold: true },
+        };
+      }
+    };
+
+    applyBoldRow(0);
+    applyBoldRow(headerRowIndex);
+    applyBoldRow(totalRowIndex);
+    applyBoldRow(signatureRowIndex);
+
+    ws["!cols"] = exportColumns.map((header, index) => {
+      let maxLen = header.length;
+      for (const row of exportRows) {
+        const value = row[index];
+        if (value !== null && value !== undefined) {
+          maxLen = Math.max(maxLen, String(value).length);
+        }
+      }
+      const totalValue = totalRow[index];
+      if (totalValue !== null && totalValue !== undefined) {
+        maxLen = Math.max(maxLen, String(totalValue).length);
+      }
+      return { wch: Math.min(60, Math.max(10, maxLen + 2)) };
     });
 
-    const ws = XLSX.utils.json_to_sheet(exportRows);
+    const borderStyle = {
+      top: { style: "thin", color: { rgb: "D0D7DE" } },
+      bottom: { style: "thin", color: { rgb: "D0D7DE" } },
+      left: { style: "thin", color: { rgb: "D0D7DE" } },
+      right: { style: "thin", color: { rgb: "D0D7DE" } },
+    } as const;
+
+    if (ws["!ref"]) {
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      for (let r = range.s.r; r <= range.e.r; r += 1) {
+        for (let c = range.s.c; c <= range.e.c; c += 1) {
+          const cellRef = XLSX.utils.encode_cell({ r, c });
+          const cell = ws[cellRef] ?? { t: "s", v: "" };
+          cell.s = { ...(cell.s ?? {}), border: borderStyle };
+          ws[cellRef] = cell;
+        }
+      }
+    }
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "History");
 
-    XLSX.writeFile(wb, `task-history-page-${page + 1}.xlsx`);
+    const safeProjectName =
+      projectName
+        ?.trim()
+        .replace(/[^a-zA-Z0-9-_ ]/g, "")
+        .replace(/\s+/g, "-") || "project";
+    const safeUserName =
+      userDisplayName
+        ?.trim()
+        .replace(/[^a-zA-Z0-9-_ ]/g, "")
+        .replace(/\s+/g, "-") || "user";
+    const fileName = `${safeProjectName}-${safeUserName}-${downloadDate}.xlsx`;
+    XLSX.writeFile(wb, fileName, { cellStyles: true });
   };
 
   const deleteTask = async (task: TaskRow) => {

@@ -25,10 +25,19 @@ export default function AuthPage() {
     checkSession();
   }, [router]);
 
-  const signUp = async (values: { username: string; password: string }) => {
+  const signUp = async (values: {
+    username: string;
+    password: string;
+    fullName: string;
+  }) => {
     const username = values.username.trim().toLowerCase();
+    const fullName = values.fullName.trim();
     if (!USERNAME_PATTERN.test(username)) {
       toast.error("Username must be 3-32 characters: a-z, 0-9, ., _, -.");
+      return;
+    }
+    if (!fullName) {
+      toast.error("Full name is required.");
       return;
     }
 
@@ -37,7 +46,7 @@ export default function AuthPage() {
       email: toAuthEmail(username),
       password: values.password,
       options: {
-        data: { username },
+        data: { username, full_name: fullName },
       },
     });
 
@@ -79,6 +88,7 @@ export default function AuthPage() {
       .insert({
         id: userId,
         username,
+        full_name: fullName,
       });
 
     setLoading(false);
@@ -180,6 +190,16 @@ export default function AuthPage() {
               label: "Sign Up",
               children: (
                 <Form layout="vertical" onFinish={signUp} requiredMark={false}>
+                  <Form.Item
+                    label="Full Name"
+                    name="fullName"
+                    rules={[
+                      { required: true, message: "Full name is required." },
+                      { whitespace: true, message: "Full name is required." },
+                    ]}
+                  >
+                    <Input placeholder="e.g. Pavan Madusha" />
+                  </Form.Item>
                   <Form.Item
                     label="Username"
                     name="username"

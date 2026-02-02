@@ -34,6 +34,7 @@ export default function Page() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [profileUsername, setProfileUsername] = useState<string | null>(null);
+  const [profileFullName, setProfileFullName] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const projectsUnavailableRef = useRef(false);
@@ -61,6 +62,7 @@ export default function Page() {
   const profileCacheRef = useRef<{
     userId: string;
     username: string | null;
+    fullName: string | null;
   } | null>(null);
   const profileInFlightRef = useRef<string | null>(null);
 
@@ -68,8 +70,10 @@ export default function Page() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [projects, activeProjectId],
   );
-  const username =
+  const displayName =
+    profileFullName ??
     profileUsername ??
+    (user?.user_metadata?.full_name as string | undefined) ??
     (user?.user_metadata?.username as string | undefined) ??
     user?.email?.split("@")[0] ??
     "User";
@@ -99,6 +103,7 @@ export default function Page() {
       if (!data?.user) {
         setUser(null);
         setProfileUsername(null);
+        setProfileFullName(null);
         setAuthLoading(false);
         router.replace("/auth");
         return;
@@ -106,6 +111,9 @@ export default function Page() {
       setUser(data.user);
       setProfileUsername(
         (data.user.user_metadata?.username as string | undefined) ?? null,
+      );
+      setProfileFullName(
+        (data.user.user_metadata?.full_name as string | undefined) ?? null,
       );
       setAuthLoading(false);
     };
@@ -115,12 +123,16 @@ export default function Page() {
         if (!session?.user) {
           setUser(null);
           setProfileUsername(null);
+          setProfileFullName(null);
           router.replace("/auth");
           return;
         }
         setUser(session.user);
         setProfileUsername(
           (session.user.user_metadata?.username as string | undefined) ?? null,
+        );
+        setProfileFullName(
+          (session.user.user_metadata?.full_name as string | undefined) ?? null,
         );
       },
     );
@@ -185,6 +197,7 @@ export default function Page() {
       const cache = profileCacheRef.current;
       if (cache?.userId === user.id) {
         setProfileUsername(cache.username);
+        setProfileFullName(cache.fullName);
         return;
       }
       if (profileInFlightRef.current === user.id) {
@@ -193,7 +206,7 @@ export default function Page() {
       profileInFlightRef.current = user.id;
       const { data, error } = await supabaseBrowser
         .from("user_profiles")
-        .select("username")
+        .select("username, full_name")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -203,13 +216,20 @@ export default function Page() {
         toast.error(friendlySupabaseError(error.message));
         if (isMissingTableError(error.message)) {
           setProfileUsername(null);
+          setProfileFullName(null);
         }
         return;
       }
 
       const nextUsername = data?.username ?? null;
-      profileCacheRef.current = { userId: user.id, username: nextUsername };
+      const nextFullName = (data as { full_name?: string | null })?.full_name ?? null;
+      profileCacheRef.current = {
+        userId: user.id,
+        username: nextUsername,
+        fullName: nextFullName,
+      };
       setProfileUsername(nextUsername);
+      setProfileFullName(nextFullName);
     };
 
     loadProfile();
@@ -476,6 +496,7 @@ export default function Page() {
     setActiveProjectId(null);
     setProjects([]);
     setProfileUsername(null);
+    setProfileFullName(null);
     projectsUnavailableRef.current = false;
     projectsCacheRef.current = null;
     projectsInFlightRef.current = null;
@@ -525,7 +546,7 @@ export default function Page() {
         </Typography.Text>
         <Space size="middle">
           <Typography.Text type="secondary">
-            Signed in as {username}
+            Signed in as {displayName}
           </Typography.Text>
           <Button
             type="text"
@@ -613,6 +634,7 @@ export default function Page() {
               projectId={activeProjectId}
               projectName={activeProject?.name ?? null}
               userId={user.id}
+              userDisplayName={displayName}
             />
           </Card>
         </div>
