@@ -32,14 +32,14 @@ body {
 }
 
 .page-content {
-  padding: 24px;
+  padding: 16px;
   height: 100%;
   overflow: hidden;
 }
 
 .dashboard {
-  max-width: 1200px;
-  margin: 0 auto;
+  max-width: 100%;
+  margin: 0;
   height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -49,24 +49,24 @@ body {
 .dashboard-top {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
   justify-items: stretch;
-}
-
-.overview-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .overview-panel {
   width: 100%;
+  grid-column: 1 / -1;
 }
 
-.overview-title {
-  margin-bottom: 0;
-  font-size: 16px;
+.dashboard-top__cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: "form task";
+  gap: 16px;
+  align-items: stretch;
+  grid-column: 1 / -1;
 }
 
 .overview-row {
@@ -74,6 +74,7 @@ body {
   align-items: center;
   gap: 12px;
   flex-wrap: nowrap;
+  justify-content: flex-start;
 }
 
 .overview-select {
@@ -90,10 +91,12 @@ body {
 
 .task-card {
   height: 100%;
+  grid-area: form;
 }
 
 .stopwatch-card {
   height: 100%;
+  grid-area: task;
 }
 
 .history-table {
@@ -165,7 +168,7 @@ body {
   }
 
   .page-content {
-    padding: 16px;
+    padding: 12px;
     height: auto;
     overflow: auto;
   }
@@ -176,6 +179,14 @@ body {
 
   .dashboard-top {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .dashboard-top__cards {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "form"
+      "task";
   }
 
   .overview-select {

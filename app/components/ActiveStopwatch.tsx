@@ -6,7 +6,6 @@ import { TaskRow } from "../types/task";
 import { formatDuration, nowMs } from "../lib/time";
 import { supabaseBrowser } from "../lib/supabaseBrowser";
 import { friendlySupabaseError } from "../lib/supabaseErrors";
-import { ACTIVE_TASK_RUNNING_START_KEY } from "../lib/storageKeys";
 import { toast } from "../lib/toast";
 
 type Status = "running" | "paused";
@@ -14,40 +13,23 @@ type Status = "running" | "paused";
 const formatStatusLabel = (value: Status) =>
   value.charAt(0).toUpperCase() + value.slice(1);
 
-const readStoredRunningStartMs = (taskId: string) => {
-  const raw = localStorage.getItem(ACTIVE_TASK_RUNNING_START_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as {
-      taskId?: string;
-      runningStartMs?: number;
-    };
-    if (parsed?.taskId !== taskId) return null;
-    if (typeof parsed.runningStartMs !== "number") return null;
-    return parsed.runningStartMs;
-  } catch {
-    return null;
-  }
-};
-
-const writeStoredRunningStartMs = (taskId: string, startMs: number) => {
-  localStorage.setItem(
-    ACTIVE_TASK_RUNNING_START_KEY,
-    JSON.stringify({
-      taskId,
-      runningStartMs: Math.floor(startMs),
-    }),
-  );
-};
-
-const clearStoredRunningStartMs = () => {
-  localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
-};
-
 const parseIsoMs = (value?: string | null) => {
   if (!value) return null;
   const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? null : parsed;
+};
+
+const getRunningStartMs = (task: TaskRow) => {
+  const updatedAtMs = parseIsoMs(task.updated_at);
+  const startedAtMs = parseIsoMs(task.started_at);
+  return updatedAtMs ?? startedAtMs ?? nowMs();
+};
+
+const getPausedAtMs = (task: TaskRow) => {
+  const pausedAtMs = parseIsoMs(task.paused_at);
+  const updatedAtMs = parseIsoMs(task.updated_at);
+  const startedAtMs = parseIsoMs(task.started_at);
+  return pausedAtMs ?? updatedAtMs ?? startedAtMs ?? nowMs();
 };
 
 export default function ActiveStopwatch({
@@ -72,36 +54,40 @@ export default function ActiveStopwatch({
   const tickRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (status !== "running") {
-      clearStoredRunningStartMs();
-      return;
-    }
+    const nextStatus = task.status as Status;
+    const nextAccumulated = task.accumulated_ms || 0;
+    const nextPauseCount = task.pause_count ?? 0;
+    const nextPausedMs = task.paused_ms ?? 0;
 
-    const storedStart = readStoredRunningStartMs(task.id);
-    if (storedStart !== null) {
-      runningStartRef.current = storedStart;
-    } else {
-      const updatedAtMs = new Date(task.updated_at).getTime();
-      const startedAtMs = new Date(task.started_at).getTime();
-      const fallbackMs = Number.isNaN(updatedAtMs) ? startedAtMs : updatedAtMs;
-      runningStartRef.current = Number.isNaN(fallbackMs) ? nowMs() : fallbackMs;
-    }
+    setStatus(nextStatus);
+    setAccumulatedMs(nextAccumulated);
+    setPauseCount(nextPauseCount);
+    setPausedMs(nextPausedMs);
 
-    writeStoredRunningStartMs(task.id, runningStartRef.current);
-  }, [status, task.id, task.updated_at, task.started_at]);
-
-  useEffect(() => {
-    if (status !== "paused") {
+    if (nextStatus === "running") {
+      runningStartRef.current = getRunningStartMs(task);
       pausedAtRef.current = null;
+      setTotalMs(nextAccumulated + (nowMs() - runningStartRef.current));
       return;
     }
-    if (pausedAtRef.current !== null) return;
-    const pausedAtMs =
-      parseIsoMs(task.paused_at) ??
-      parseIsoMs(task.updated_at) ??
-      parseIsoMs(task.started_at);
-    pausedAtRef.current = pausedAtMs ?? nowMs();
-  }, [status, task.paused_at, task.updated_at, task.started_at]);
+
+    if (nextStatus === "paused") {
+      pausedAtRef.current = getPausedAtMs(task);
+    } else {
+      pausedAtRef.current = null;
+    }
+
+    setTotalMs(nextAccumulated);
+  }, [
+    task.id,
+    task.status,
+    task.accumulated_ms,
+    task.pause_count,
+    task.paused_ms,
+    task.paused_at,
+    task.updated_at,
+    task.started_at,
+  ]);
 
   // ticking
   useEffect(() => {
@@ -148,7 +134,6 @@ export default function ActiveStopwatch({
     setStatus("paused");
     setPauseCount(nextPauseCount);
     pausedAtRef.current = pauseStartedMs;
-    clearStoredRunningStartMs();
 
     await persist({
       status: "paused",
@@ -167,7 +152,6 @@ export default function ActiveStopwatch({
     const nextPausedMs = pausedMs + pauseSliceMs;
 
     runningStartRef.current = nowMs();
-    writeStoredRunningStartMs(task.id, runningStartRef.current);
     setTotalMs(accumulatedMs);
     setStatus("running");
     setPausedMs(nextPausedMs);
@@ -205,7 +189,6 @@ export default function ActiveStopwatch({
 
     setTotalMs(finalMs);
     setPausedMs(finalPausedMs);
-    clearStoredRunningStartMs();
     onFinishedOrCanceled();
   };
 
@@ -228,7 +211,6 @@ export default function ActiveStopwatch({
 
     setTotalMs(0);
     setPausedMs(finalPausedMs);
-    clearStoredRunningStartMs();
     onFinishedOrCanceled();
   };
 

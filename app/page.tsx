@@ -27,28 +27,7 @@ import { toast } from "./lib/toast";
 import TaskComposer from "./components/TaskComposer";
 import ActiveStopwatch from "./components/ActiveStopwatch";
 import HistoryTable from "./components/HistoryTable";
-import {
-  ACTIVE_PROJECT_ID_KEY,
-  ACTIVE_TASK_KEY,
-  ACTIVE_TASK_RUNNING_START_KEY,
-} from "./lib/storageKeys";
-
-type StoredActiveTask = {
-  projectId: string;
-  taskId: string;
-};
-
-const readStoredActiveTask = (): StoredActiveTask | null => {
-  const raw = localStorage.getItem(ACTIVE_TASK_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as StoredActiveTask;
-    if (!parsed?.projectId || !parsed?.taskId) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-};
+import { ACTIVE_PROJECT_ID_KEY } from "./lib/storageKeys";
 
 export default function Page() {
   const router = useRouter();
@@ -78,7 +57,7 @@ export default function Page() {
     projects: ProjectRow[];
   } | null>(null);
   const projectsInFlightRef = useRef<string | null>(null);
-  const activeTaskInFlightRef = useRef<string | null>(null);
+  const activeTaskRequestRef = useRef(0);
   const profileCacheRef = useRef<{
     userId: string;
     username: string | null;
@@ -98,20 +77,13 @@ export default function Page() {
   const applyProjects = useCallback((nextProjects: ProjectRow[]) => {
     setProjects(nextProjects);
 
-    const storedActive = readStoredActiveTask();
     const storedProjectId = localStorage.getItem(ACTIVE_PROJECT_ID_KEY);
     const storedProjectMatch = nextProjects.find(
       (project) => project.id === storedProjectId,
     );
-    const activeProjectMatch = nextProjects.find(
-      (project) => project.id === storedActive?.projectId,
-    );
 
     const nextActiveProjectId =
-      activeProjectMatch?.id ??
-      storedProjectMatch?.id ??
-      nextProjects[0]?.id ??
-      null;
+      storedProjectMatch?.id ?? nextProjects[0]?.id ?? null;
 
     setActiveProjectId(nextActiveProjectId);
     if (nextActiveProjectId) {
@@ -243,69 +215,79 @@ export default function Page() {
     loadProfile();
   }, [user]);
 
+  const fetchActiveTask = useCallback(async () => {
+    const userId = user?.id ?? null;
+    if (!userId || !activeProjectId) {
+      setActiveTask(null);
+      return;
+    }
+
+    const requestId = (activeTaskRequestRef.current += 1);
+    const { data, error } = await supabaseBrowser
+      .from("tasks")
+      .select("*")
+      .eq("project_id", activeProjectId)
+      .eq("user_id", userId)
+      .in("status", ["running", "paused"])
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (activeTaskRequestRef.current !== requestId) return;
+
+    if (error) {
+      toast.error(friendlySupabaseError(error.message));
+      if (isMissingTableError(error.message)) {
+        setActiveTask(null);
+      }
+      return;
+    }
+
+    const nextTask = (data as TaskRow[] | null)?.[0] ?? null;
+    setActiveTask(nextTask);
+  }, [activeProjectId, user?.id]);
+
   useEffect(() => {
-    const loadActiveTask = async () => {
-      if (!user || !activeProjectId) {
-        setActiveTask(null);
-        return;
-      }
+    fetchActiveTask();
+  }, [fetchActiveTask]);
 
-      const stored = readStoredActiveTask();
-      if (!stored || stored.projectId !== activeProjectId) {
-        setActiveTask(null);
-        return;
-      }
+  useEffect(() => {
+    const userId = user?.id ?? null;
+    if (!userId || !activeProjectId) return;
 
-      const requestKey = `${user.id}:${activeProjectId}:${stored.taskId}`;
-      if (activeTaskInFlightRef.current === requestKey) {
-        return;
-      }
-      activeTaskInFlightRef.current = requestKey;
+    const channel = supabaseBrowser
+      .channel(`tasks:${userId}:${activeProjectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tasks",
+          filter: `project_id=eq.${activeProjectId}`,
+        },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as TaskRow | null;
+          if (!row) return;
+          if (row.user_id !== userId) return;
+          if (row.project_id !== activeProjectId) return;
+          if (!["running", "paused", "finished", "canceled"].includes(row.status))
+            return;
+          fetchActiveTask();
+          setRefreshKey((value) => value + 1);
+        },
+      )
+      .subscribe();
 
-      const { data, error } = await supabaseBrowser
-        .from("tasks")
-        .select("*")
-        .eq("id", stored.taskId)
-        .eq("project_id", activeProjectId)
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      activeTaskInFlightRef.current = null;
-
-      if (error) {
-        toast.error(friendlySupabaseError(error.message));
-        if (isMissingTableError(error.message)) {
-          localStorage.removeItem(ACTIVE_TASK_KEY);
-          localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
-          setActiveTask(null);
-        }
-        return;
-      }
-
-      if (data && (data.status === "running" || data.status === "paused")) {
-        setActiveTask(data as TaskRow);
-      } else {
-        localStorage.removeItem(ACTIVE_TASK_KEY);
-        localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
-        setActiveTask(null);
-      }
+    return () => {
+      supabaseBrowser.removeChannel(channel);
     };
-
-    loadActiveTask();
-  }, [activeProjectId, user]);
+  }, [activeProjectId, fetchActiveTask, user?.id]);
 
   const onTaskCreated = (task: TaskRow) => {
-    localStorage.setItem(
-      ACTIVE_TASK_KEY,
-      JSON.stringify({ projectId: task.project_id, taskId: task.id }),
-    );
     setActiveTask(task);
     setRefreshKey((x) => x + 1);
   };
 
   const onTaskEndedOrCanceled = () => {
-    localStorage.removeItem(ACTIVE_TASK_KEY);
-    localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
     setActiveTask(null);
     setRefreshKey((x) => x + 1);
   };
@@ -482,19 +464,14 @@ export default function Page() {
   };
 
   const handleProjectChange = (nextProjectId: string) => {
-    if (activeTask && activeTask.project_id !== nextProjectId) {
-      toast.info("Finish or cancel the active task before switching projects.");
-      return;
-    }
+    setActiveTask(null);
     setActiveProjectId(nextProjectId);
     localStorage.setItem(ACTIVE_PROJECT_ID_KEY, nextProjectId);
   };
 
   const signOut = async () => {
     await supabaseBrowser.auth.signOut();
-    localStorage.removeItem(ACTIVE_TASK_KEY);
     localStorage.removeItem(ACTIVE_PROJECT_ID_KEY);
-    localStorage.removeItem(ACTIVE_TASK_RUNNING_START_KEY);
     setActiveTask(null);
     setActiveProjectId(null);
     setProjects([]);
@@ -504,7 +481,7 @@ export default function Page() {
     projectsInFlightRef.current = null;
     profileCacheRef.current = null;
     profileInFlightRef.current = null;
-    activeTaskInFlightRef.current = null;
+    activeTaskRequestRef.current = 0;
     router.replace("/auth");
   };
 
@@ -562,12 +539,8 @@ export default function Page() {
       <Layout.Content className="page-content">
         <div className="dashboard">
           <div className="dashboard-top">
-            <div className="overview-stack">
-              <div className="overview-panel">
-                <div className="overview-row">
-                  <Typography.Title level={5} className="overview-title">
-                    Projects
-                  </Typography.Title>
+            <div className="overview-panel">
+              <div className="overview-row">
                 <Select
                   className="overview-select"
                   placeholder="Select project"
@@ -580,21 +553,22 @@ export default function Page() {
                   }))}
                   onChange={handleProjectChange}
                 />
-              <Button
-                onClick={() => setCreateProjectOpen(true)}
-                disabled={activeTask?.status === "running"}
-              >
-                New Project
-              </Button>
-              <Button
-                onClick={openManageProjects}
-                disabled={activeTask?.status === "running"}
-              >
-                Manage Projects
-              </Button>
-            </div>
+                <Button
+                  onClick={() => setCreateProjectOpen(true)}
+                  disabled={activeTask?.status === "running"}
+                >
+                  New Project
+                </Button>
+                <Button
+                  onClick={openManageProjects}
+                  disabled={activeTask?.status === "running"}
+                >
+                  Manage Projects
+                </Button>
+              </div>
             </div>
 
+            <div className="dashboard-top__cards">
               <Card className="task-card">
                 <TaskComposer
                   onCreated={onTaskCreated}
@@ -603,24 +577,24 @@ export default function Page() {
                   userId={user.id}
                 />
               </Card>
-            </div>
 
-            <Card className="stopwatch-card">
-              {activeTask ? (
-                <ActiveStopwatch
-                  key={activeTask.id}
-                  task={activeTask}
-                  onUpdated={onTaskUpdated}
-                  onFinishedOrCanceled={onTaskEndedOrCanceled}
-                />
-              ) : (
-                <Typography.Text type="secondary">
-                  {activeProject
-                    ? "No active task. Create a task to start the stopwatch."
-                    : "Create a project to begin tracking tasks."}
-                </Typography.Text>
-              )}
-            </Card>
+              <Card className="stopwatch-card">
+                {activeTask ? (
+                  <ActiveStopwatch
+                    key={activeTask.id}
+                    task={activeTask}
+                    onUpdated={onTaskUpdated}
+                    onFinishedOrCanceled={onTaskEndedOrCanceled}
+                  />
+                ) : (
+                  <Typography.Text type="secondary">
+                    {activeProject
+                      ? "No active task. Create a task to start the stopwatch."
+                      : "Create a project to begin tracking tasks."}
+                  </Typography.Text>
+                )}
+              </Card>
+            </div>
           </div>
 
           <Card

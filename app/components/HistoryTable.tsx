@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
+  EyeOutlined,
   LoadingOutlined,
 } from "@ant-design/icons";
 import {
@@ -26,11 +28,16 @@ import {
   friendlySupabaseError,
   isMissingTableError,
 } from "../lib/supabaseErrors";
-import { formatDateTimeYmdHms, formatDuration } from "../lib/time";
+import {
+  formatDateTimeYdmHms,
+  formatDateTimeYmdHms,
+  formatDuration,
+} from "../lib/time";
 import { toast } from "../lib/toast";
 import EditTaskModal from "./EditTaskModal";
 
 const PAGE_SIZE = 20;
+const RANGE_DURATION_PAGE_SIZE = 1000;
 const { RangePicker } = DatePicker;
 
 export default function HistoryTable({
@@ -65,6 +72,9 @@ export default function HistoryTable({
   const inFlightRef = useRef<Set<string>>(new Set());
   const activeRequestRef = useRef<string | null>(null);
   const [tableUnavailable, setTableUnavailable] = useState(false);
+  const [rangeDurationMs, setRangeDurationMs] = useState<number | null>(null);
+  const [isRangeDurationLoading, setIsRangeDurationLoading] = useState(false);
+  const rangeDurationRequestRef = useRef(0);
 
   const statusTagColors: Record<TaskRow["status"], string> = {
     running: "#D73535",
@@ -208,6 +218,65 @@ export default function HistoryTable({
   }, [page, refreshKey, projectId, userId, rangeKey]);
 
   useEffect(() => {
+    if (!projectId || !dateRange || tableUnavailable) {
+      setRangeDurationMs(null);
+      setIsRangeDurationLoading(false);
+      return;
+    }
+
+    const requestId = (rangeDurationRequestRef.current += 1);
+    const startDate = dateRange?.[0]?.startOf("day") ?? null;
+    const endDate = dateRange?.[1]?.endOf("day") ?? null;
+
+    const loadRangeDuration = async () => {
+      setIsRangeDurationLoading(true);
+      let totalDurationMs = 0;
+      let offset = 0;
+
+      while (true) {
+        let query = supabaseBrowser
+          .from("tasks")
+          .select("duration_ms")
+          .eq("project_id", projectId)
+          .eq("user_id", userId)
+          .range(offset, offset + RANGE_DURATION_PAGE_SIZE - 1);
+
+        if (startDate) {
+          query = query.gte("started_at", startDate.toISOString());
+        }
+        if (endDate) {
+          query = query.lte("started_at", endDate.toISOString());
+        }
+
+        const { data, error } = await query;
+
+        if (rangeDurationRequestRef.current !== requestId) return;
+
+        if (error) {
+          toast.error(friendlySupabaseError(error.message));
+          setRangeDurationMs(null);
+          setIsRangeDurationLoading(false);
+          return;
+        }
+
+        const chunk = (data as Pick<TaskRow, "duration_ms">[]) ?? [];
+        for (const row of chunk) {
+          totalDurationMs += Math.max(0, row.duration_ms ?? 0);
+        }
+
+        if (chunk.length < RANGE_DURATION_PAGE_SIZE) break;
+        offset += RANGE_DURATION_PAGE_SIZE;
+      }
+
+      if (rangeDurationRequestRef.current !== requestId) return;
+      setRangeDurationMs(totalDurationMs);
+      setIsRangeDurationLoading(false);
+    };
+
+    loadRangeDuration();
+  }, [projectId, userId, refreshKey, dateRange, tableUnavailable]);
+
+  useEffect(() => {
     if (!contextMenu) return;
     const handlePointerDown = (event: MouseEvent) => {
       if (event.button !== 2) {
@@ -231,19 +300,35 @@ export default function HistoryTable({
   }, [contextMenu]);
 
   const downloadExcel = () => {
-    const exportRows = rows.map((r) => ({
+    const exportRows: Array<Record<string, string | number>> = rows.map(
+      (r) => ({
       Title: r.title,
       Project: projectName ?? "",
       Notes: r.notes ?? "",
-      StartedAt: r.started_at,
-      EndedAt: r.ended_at ?? "",
+      StartedAt: formatDateTimeYdmHms(r.started_at),
+      EndedAt: formatDateTimeYdmHms(r.ended_at),
       Duration: formatDuration(r.duration_ms),
-      DurationMs: r.duration_ms,
       PauseCount: getPauseCount(r),
       Paused: formatDuration(getPausedMs(r)),
-      PausedMs: getPausedMs(r),
       Status: formatStatusLabel(r.status),
-    }));
+      }),
+    );
+
+    const totalDurationMs = rows.reduce(
+      (sum, row) => sum + Math.max(0, row.duration_ms ?? 0),
+      0,
+    );
+    exportRows.push({
+      Title: "Total",
+      Project: "",
+      Notes: "",
+      StartedAt: "",
+      EndedAt: "",
+      Duration: formatDuration(totalDurationMs),
+      PauseCount: "",
+      Paused: "",
+      Status: "",
+    });
 
     const ws = XLSX.utils.json_to_sheet(exportRows);
     const wb = XLSX.utils.book_new();
@@ -333,7 +418,12 @@ export default function HistoryTable({
       key: "duration_ms",
       width: 140,
       render: (value: number) => (
-        <span style={{ fontFamily: "var(--font-geist-mono)" }}>
+        <span
+          style={{
+            fontFamily: "var(--font-geist-mono)",
+            fontWeight: 600,
+          }}
+        >
           {formatDuration(value)}
         </span>
       ),
@@ -429,13 +519,18 @@ export default function HistoryTable({
         </div>
 
         <Space size="middle" wrap>
-          <Button
-            icon={<DownloadOutlined />}
-            onClick={downloadExcel}
-            disabled={rows.length === 0}
-          >
-            Download Excel
-          </Button>
+          {dateRange ? (
+            <Typography.Text type="secondary">
+              Selected range total:{" "}
+              <span style={{ fontWeight: 600 }}>
+                {isRangeDurationLoading
+                  ? "Calculating..."
+                  : rangeDurationMs === null
+                    ? "-"
+                    : formatDuration(rangeDurationMs)}
+              </span>
+            </Typography.Text>
+          ) : null}
           <RangePicker
             value={dateRange}
             onChange={(value) => {
@@ -446,6 +541,13 @@ export default function HistoryTable({
             format="YYYY-MM-DD"
             placeholder={["Start date", "End date"]}
           />
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={downloadExcel}
+            disabled={rows.length === 0}
+          >
+            Download Excel
+          </Button>
           <Pagination
             current={page + 1}
             pageSize={PAGE_SIZE}
@@ -500,7 +602,15 @@ export default function HistoryTable({
         >
           <Button
             type="text"
-            style={{ width: "100%", textAlign: "left" }}
+            style={{
+              width: "100%",
+              textAlign: "left",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              justifyContent: "flex-start",
+            }}
+            icon={<EyeOutlined />}
             onClick={() => openView(contextMenu.task)}
           >
             View
@@ -508,7 +618,15 @@ export default function HistoryTable({
           <Button
             type="text"
             danger
-            style={{ width: "100%", textAlign: "left" }}
+            style={{
+              width: "100%",
+              textAlign: "left",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              justifyContent: "flex-start",
+            }}
+            icon={<DeleteOutlined />}
             disabled={!canDeleteTask(contextMenu.task)}
             onClick={() => openDelete(contextMenu.task)}
           >

@@ -27,6 +27,28 @@ export default function TaskComposer({
     if (!t || !projectId) return;
 
     setIsSaving(true);
+    const { data: existingTasks, error: existingError } = await supabaseBrowser
+      .from("tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("user_id", userId)
+      .in("status", ["running", "paused"])
+      .limit(1);
+
+    if (existingError) {
+      setIsSaving(false);
+      toast.error(friendlySupabaseError(existingError.message));
+      return;
+    }
+
+    if (existingTasks && existingTasks.length > 0) {
+      setIsSaving(false);
+      toast.error(
+        "This project already has an active task. Finish or cancel it first.",
+      );
+      return;
+    }
+
     const { data, error } = await supabaseBrowser
       .from("tasks")
       .insert({
