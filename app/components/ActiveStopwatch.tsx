@@ -25,19 +25,6 @@ const parseIsoMs = (value?: string | null) => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-const getRunningStartMs = (task: TaskRow) => {
-  const updatedAtMs = parseIsoMs(task.updated_at);
-  const startedAtMs = parseIsoMs(task.started_at);
-  return updatedAtMs ?? startedAtMs ?? nowMs();
-};
-
-const getPausedAtMs = (task: TaskRow) => {
-  const pausedAtMs = parseIsoMs(task.paused_at);
-  const updatedAtMs = parseIsoMs(task.updated_at);
-  const startedAtMs = parseIsoMs(task.started_at);
-  return pausedAtMs ?? updatedAtMs ?? startedAtMs ?? nowMs();
-};
-
 export default function ActiveStopwatch({
   task,
   onUpdated,
@@ -60,30 +47,48 @@ export default function ActiveStopwatch({
   const tickRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const nextStatus = task.status as Status;
-    const nextAccumulated = task.accumulated_ms || 0;
-    const nextPauseCount = task.pause_count ?? 0;
-    const nextPausedMs = task.paused_ms ?? 0;
+    let isCancelled = false;
 
-    setStatus(nextStatus);
-    setAccumulatedMs(nextAccumulated);
-    setPauseCount(nextPauseCount);
-    setPausedMs(nextPausedMs);
+    const syncFromTask = async () => {
+      await Promise.resolve();
+      if (isCancelled) return;
 
-    if (nextStatus === "running") {
-      runningStartRef.current = getRunningStartMs(task);
-      pausedAtRef.current = null;
-      setTotalMs(nextAccumulated + (nowMs() - runningStartRef.current));
-      return;
-    }
+      const nextStatus = task.status as Status;
+      const nextAccumulated = task.accumulated_ms || 0;
+      const nextPauseCount = task.pause_count ?? 0;
+      const nextPausedMs = task.paused_ms ?? 0;
 
-    if (nextStatus === "paused") {
-      pausedAtRef.current = getPausedAtMs(task);
-    } else {
-      pausedAtRef.current = null;
-    }
+      setStatus(nextStatus);
+      setAccumulatedMs(nextAccumulated);
+      setPauseCount(nextPauseCount);
+      setPausedMs(nextPausedMs);
 
-    setTotalMs(nextAccumulated);
+      if (nextStatus === "running") {
+        const updatedAtMs = parseIsoMs(task.updated_at);
+        const startedAtMs = parseIsoMs(task.started_at);
+        runningStartRef.current = updatedAtMs ?? startedAtMs ?? nowMs();
+        pausedAtRef.current = null;
+        setTotalMs(nextAccumulated + (nowMs() - runningStartRef.current));
+        return;
+      }
+
+      if (nextStatus === "paused") {
+        const pausedAtMs = parseIsoMs(task.paused_at);
+        const updatedAtMs = parseIsoMs(task.updated_at);
+        const startedAtMs = parseIsoMs(task.started_at);
+        pausedAtRef.current = pausedAtMs ?? updatedAtMs ?? startedAtMs ?? nowMs();
+      } else {
+        pausedAtRef.current = null;
+      }
+
+      setTotalMs(nextAccumulated);
+    };
+
+    void syncFromTask();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [
     task.id,
     task.status,

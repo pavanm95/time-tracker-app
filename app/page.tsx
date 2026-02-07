@@ -63,7 +63,10 @@ export default function Page() {
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [activeTask, setActiveTask] = useState<TaskRow | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 640px)").matches;
+  });
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const projectsCacheRef = useRef<{
     userId: string;
@@ -89,6 +92,7 @@ export default function Page() {
     (user?.user_metadata?.username as string | undefined) ??
     user?.email?.split("@")[0] ??
     "User";
+  const isHistoryOverlayOpen = isMobile && isHistoryOpen;
 
   const applyProjects = useCallback((nextProjects: ProjectRow[]) => {
     setProjects(nextProjects);
@@ -102,6 +106,11 @@ export default function Page() {
       storedProjectMatch?.id ?? nextProjects[0]?.id ?? null;
 
     setActiveProjectId(nextActiveProjectId);
+    setActiveTask((previous) => {
+      if (!nextActiveProjectId) return null;
+      if (!previous) return null;
+      return previous.project_id === nextActiveProjectId ? previous : null;
+    });
     if (nextActiveProjectId) {
       localStorage.setItem(ACTIVE_PROJECT_ID_KEY, nextActiveProjectId);
     } else {
@@ -112,27 +121,18 @@ export default function Page() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mediaQuery = window.matchMedia("(max-width: 640px)");
-    const update = () => setIsMobile(mediaQuery.matches);
-    update();
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener("change", update);
-    } else {
-      mediaQuery.addListener(update);
-    }
-    return () => {
-      if (mediaQuery.addEventListener) {
-        mediaQuery.removeEventListener("change", update);
-      } else {
-        mediaQuery.removeListener(update);
+    const update = () => {
+      const nextIsMobile = mediaQuery.matches;
+      setIsMobile(nextIsMobile);
+      if (!nextIsMobile) {
+        setIsHistoryOpen(false);
       }
     };
+    mediaQuery.addEventListener("change", update);
+    return () => {
+      mediaQuery.removeEventListener("change", update);
+    };
   }, []);
-
-  useEffect(() => {
-    if (!isMobile && isHistoryOpen) {
-      setIsHistoryOpen(false);
-    }
-  }, [isMobile, isHistoryOpen]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -183,6 +183,7 @@ export default function Page() {
 
   useEffect(() => {
     const loadProjects = async () => {
+      await Promise.resolve();
       if (!user || projectsUnavailableRef.current) return;
       const cache = projectsCacheRef.current;
       if (cache?.userId === user.id) {
@@ -217,7 +218,7 @@ export default function Page() {
       applyProjects(nextProjects);
     };
 
-    loadProjects();
+    void loadProjects();
   }, [user, applyProjects]);
 
   useEffect(() => {
@@ -230,6 +231,7 @@ export default function Page() {
 
   useEffect(() => {
     const loadProfile = async () => {
+      await Promise.resolve();
       if (!user) return;
       const cache = profileCacheRef.current;
       if (cache?.userId === user.id) {
@@ -269,10 +271,11 @@ export default function Page() {
       setProfileFullName(nextFullName);
     };
 
-    loadProfile();
+    void loadProfile();
   }, [user]);
 
   const fetchActiveTask = useCallback(async () => {
+    await Promise.resolve();
     const userId = user?.id ?? null;
     if (!userId || !activeProjectId) {
       setActiveTask(null);
@@ -304,10 +307,6 @@ export default function Page() {
   }, [activeProjectId, user?.id]);
 
   useEffect(() => {
-    fetchActiveTask();
-  }, [fetchActiveTask]);
-
-  useEffect(() => {
     const userId = user?.id ?? null;
     if (!userId || !activeProjectId) return;
 
@@ -328,11 +327,15 @@ export default function Page() {
           if (row.project_id !== activeProjectId) return;
           if (!["running", "paused", "finished", "canceled"].includes(row.status))
             return;
-          fetchActiveTask();
+          void fetchActiveTask();
           setRefreshKey((value) => value + 1);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void fetchActiveTask();
+        }
+      });
 
     return () => {
       supabaseBrowser.removeChannel(channel);
@@ -389,6 +392,7 @@ export default function Page() {
         : null;
       return next;
     });
+    setActiveTask(null);
     setActiveProjectId(project.id);
     localStorage.setItem(ACTIVE_PROJECT_ID_KEY, project.id);
     setCreateProjectOpen(false);
@@ -732,7 +736,7 @@ export default function Page() {
         </div>
       </Layout.Content>
 
-      {isMobile && !isHistoryOpen ? (
+      {isMobile && !isHistoryOverlayOpen ? (
         <div className="mobile-history-cta">
           <Button
             type="primary"
@@ -745,7 +749,7 @@ export default function Page() {
         </div>
       ) : null}
 
-      {isMobile && isHistoryOpen ? (
+      {isHistoryOverlayOpen ? (
         <div className="mobile-history-overlay">
           <div className="mobile-history-header">
             <Button

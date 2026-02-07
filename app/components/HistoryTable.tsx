@@ -137,6 +137,7 @@ export default function HistoryTable({
   };
 
   const load = async () => {
+    await Promise.resolve();
     if (!projectId) {
       setIsLoading(false);
       setRows([]);
@@ -232,22 +233,23 @@ export default function HistoryTable({
   };
 
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, refreshKey, projectId, userId, rangeKey]);
 
   useEffect(() => {
-    if (!projectId || !dateRange || tableUnavailable) {
-      setRangeDurationMs(null);
-      setIsRangeDurationLoading(false);
-      return;
-    }
-
-    const requestId = (rangeDurationRequestRef.current += 1);
-    const startDate = dateRange?.[0]?.startOf("day") ?? null;
-    const endDate = dateRange?.[1]?.endOf("day") ?? null;
-
     const loadRangeDuration = async () => {
+      await Promise.resolve();
+      if (!projectId || !dateRange || tableUnavailable) {
+        setRangeDurationMs(null);
+        setIsRangeDurationLoading(false);
+        return;
+      }
+
+      const requestId = (rangeDurationRequestRef.current += 1);
+      const startDate = dateRange?.[0]?.startOf("day") ?? null;
+      const endDate = dateRange?.[1]?.endOf("day") ?? null;
+
       setIsRangeDurationLoading(true);
       let totalDurationMs = 0;
       let offset = 0;
@@ -292,7 +294,7 @@ export default function HistoryTable({
       setIsRangeDurationLoading(false);
     };
 
-    loadRangeDuration();
+    void loadRangeDuration();
   }, [projectId, userId, refreshKey, dateRange, tableUnavailable]);
 
   useEffect(() => {
