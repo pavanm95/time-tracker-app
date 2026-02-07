@@ -6,7 +6,7 @@ import {
   DownloadOutlined,
   EditOutlined,
   EyeOutlined,
-  LoadingOutlined,
+  MoreOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -28,15 +28,19 @@ import {
   friendlySupabaseError,
   isMissingTableError,
 } from "../lib/supabaseErrors";
-import {
-  formatDateTimeYdmHms,
-  formatDateTimeYmdHms,
-  formatDuration,
-} from "../lib/time";
+import { formatDateTimeYmdHms, formatDuration } from "../lib/time";
 import { toast } from "../lib/toast";
 import EditTaskModal from "./EditTaskModal";
+import { colors } from "../styles/colors";
+import {
+  canDeleteTask,
+  formatStatusLabel,
+  getDisplayDurationMs,
+  getPauseCount,
+  getPausedMs,
+} from "../lib/taskStatus";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 const RANGE_DURATION_PAGE_SIZE = 1000;
 const { RangePicker } = DatePicker;
 
@@ -46,12 +50,14 @@ export default function HistoryTable({
   projectName,
   userId,
   userDisplayName,
+  isMobileView = false,
 }: {
   refreshKey: number;
   projectId: string | null;
   projectName: string | null;
   userId: string;
   userDisplayName: string;
+  isMobileView?: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<TaskRow[]>([]);
@@ -67,6 +73,7 @@ export default function HistoryTable({
     x: number;
     y: number;
   } | null>(null);
+  const [swipedRowId, setSwipedRowId] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<RangePickerProps["value"]>(null);
   const cacheRef = useRef<Map<string, { rows: TaskRow[]; total: number }>>(
     new Map(),
@@ -77,36 +84,46 @@ export default function HistoryTable({
   const [rangeDurationMs, setRangeDurationMs] = useState<number | null>(null);
   const [isRangeDurationLoading, setIsRangeDurationLoading] = useState(false);
   const rangeDurationRequestRef = useRef(0);
+  const longPressTimeoutRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const swipeStateRef = useRef<{
+    rowId: string | null;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    moved: boolean;
+    pointerId: number | null;
+    pointerType: string | null;
+  }>({
+    rowId: null,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    moved: false,
+    pointerId: null,
+    pointerType: null,
+  });
 
   const statusTagColors: Record<TaskRow["status"], string> = {
-    running: "#D73535",
-    finished: "#007E6E",
-    canceled: "#FFA239",
-    paused: "#e2e8f0",
+    running: colors.status.running,
+    finished: colors.status.finished,
+    canceled: colors.status.canceled,
+    paused: colors.status.paused,
   };
   const statusTextColors: Record<TaskRow["status"], string> = {
-    running: "#ffffff",
-    finished: "#ffffff",
-    canceled: "#0f172a",
-    paused: "#475569",
+    running: colors.statusText.running,
+    finished: colors.statusText.finished,
+    canceled: colors.statusText.canceled,
+    paused: colors.statusText.paused,
   };
-  const formatStatusLabel = (value: TaskRow["status"]) =>
-    value.charAt(0).toUpperCase() + value.slice(1);
-  const getPauseCount = (task: TaskRow) => Math.max(0, task.pause_count ?? 0);
-  const getPausedMs = (task: TaskRow) => {
-    const baseMs = Math.max(0, task.paused_ms ?? 0);
-    if (task.status !== "paused") return baseMs;
-    const pausedAt = task.paused_at ?? task.updated_at ?? task.started_at;
-    const pausedAtMs = pausedAt ? new Date(pausedAt).getTime() : NaN;
-    if (Number.isNaN(pausedAtMs)) return baseMs;
-    return Math.max(0, baseMs + (Date.now() - pausedAtMs));
+  const getCssVarValue = (name: string) => {
+    if (typeof window === "undefined") return "";
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue(name)
+      .trim();
   };
-  const getDisplayDurationMs = (task: TaskRow) =>
-    ["finished", "canceled"].includes(task.status)
-      ? task.duration_ms
-      : task.accumulated_ms;
-  const canDeleteTask = (task: TaskRow) =>
-    ["finished", "canceled"].includes(task.status);
   const rangeKey = useMemo(() => {
     if (!dateRange) return "all";
     return dateRange
@@ -288,7 +305,10 @@ export default function HistoryTable({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setContextMenu(null);
     };
-    const handleScroll = () => setContextMenu(null);
+    const handleScroll = () => {
+      setContextMenu(null);
+      setSwipedRowId(null);
+    };
     window.addEventListener("mousedown", handlePointerDown);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", handleScroll);
@@ -300,6 +320,20 @@ export default function HistoryTable({
       window.removeEventListener("scroll", handleScroll, true);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    if (!swipedRowId) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSwipedRowId(null);
+    };
+    const handleResize = () => setSwipedRowId(null);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [swipedRowId]);
 
   const downloadExcel = () => {
     const exportColumns = [
@@ -457,11 +491,17 @@ export default function HistoryTable({
       return { wch: Math.min(60, Math.max(10, maxLen + 2)) };
     });
 
+    const excelBorderRgb = (
+      getCssVarValue("--color-excel-border") ||
+      getCssVarValue("--color-border-subtle")
+    )
+      .replace("#", "")
+      .toUpperCase();
     const borderStyle = {
-      top: { style: "thin", color: { rgb: "D0D7DE" } },
-      bottom: { style: "thin", color: { rgb: "D0D7DE" } },
-      left: { style: "thin", color: { rgb: "D0D7DE" } },
-      right: { style: "thin", color: { rgb: "D0D7DE" } },
+      top: { style: "thin", color: { rgb: excelBorderRgb } },
+      bottom: { style: "thin", color: { rgb: excelBorderRgb } },
+      left: { style: "thin", color: { rgb: excelBorderRgb } },
+      right: { style: "thin", color: { rgb: excelBorderRgb } },
     } as const;
 
     if (ws["!ref"]) {
@@ -559,6 +599,7 @@ export default function HistoryTable({
       dataIndex: "started_at",
       key: "started_at",
       width: 190,
+      responsive: ["md"],
       render: (value: string) => formatDateTimeYmdHms(value),
     },
     {
@@ -566,6 +607,7 @@ export default function HistoryTable({
       dataIndex: "ended_at",
       key: "ended_at",
       width: 190,
+      responsive: ["md"],
       render: (value: string | null) => formatDateTimeYmdHms(value),
     },
     {
@@ -573,15 +615,28 @@ export default function HistoryTable({
       dataIndex: "duration_ms",
       key: "duration_ms",
       width: 140,
-      render: (value: number) => (
-        <span
-          style={{
-            fontFamily: "var(--font-geist-mono)",
-            fontWeight: 600,
-          }}
-        >
-          {formatDuration(value)}
-        </span>
+      render: (value: number, record) => (
+        <div className="history-table__duration-cell">
+          <span
+            style={{
+              fontFamily: "var(--font-geist-mono)",
+              fontWeight: 600,
+            }}
+          >
+            {formatDuration(value)}
+          </span>
+          <Tag
+            className="history-table__mobile-status"
+            color={statusTagColors[record.status]}
+            style={{
+              color: statusTextColors[record.status],
+              border: "none",
+              borderRadius: 999,
+            }}
+          >
+            {formatStatusLabel(record.status)}
+          </Tag>
+        </div>
       ),
     },
     {
@@ -589,6 +644,7 @@ export default function HistoryTable({
       dataIndex: "status",
       key: "status",
       width: 130,
+      responsive: ["md"],
       render: (value: TaskRow["status"]) => (
         <Tag
           color={statusTagColors[value]}
@@ -602,37 +658,11 @@ export default function HistoryTable({
         </Tag>
       ),
     },
-    {
-      title: "Action",
-      key: "edit",
-      width: 60,
-      render: (_, record) =>
-        record.status === "running" ? (
-          <Button
-            type="text"
-            icon={<LoadingOutlined spin />}
-            aria-label="Running"
-            title="Running"
-            disabled
-          />
-        ) : (
-          <Button
-            type="text"
-            icon={<EditOutlined />}
-            onClick={() => {
-              setEditingTask(record);
-              setModalOpen(true);
-            }}
-            aria-label="Edit"
-            title="Edit"
-          />
-        ),
-    },
   ];
 
   const getContextMenuPosition = (x: number, y: number) => {
     const menuWidth = 180;
-    const menuHeight = 84;
+    const menuHeight = 132;
     const padding = 8;
     const maxX = window.innerWidth - menuWidth - padding;
     const maxY = window.innerHeight - menuHeight - padding;
@@ -642,9 +672,31 @@ export default function HistoryTable({
     };
   };
 
+  const clearLongPress = () => {
+    if (longPressTimeoutRef.current !== null) {
+      window.clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  };
+
   const openView = (task: TaskRow) => {
     setViewTask(task);
     setContextMenu(null);
+    setSwipedRowId(null);
+  };
+
+  const openEdit = (task: TaskRow) => {
+    setEditingTask(task);
+    setModalOpen(true);
+    setContextMenu(null);
+    setSwipedRowId(null);
+  };
+
+  const openContextMenuAt = (task: TaskRow, element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    const position = getContextMenuPosition(rect.right, rect.bottom);
+    setContextMenu({ task, ...position });
+    setSwipedRowId(null);
   };
 
   const openDelete = (task: TaskRow) => {
@@ -652,29 +704,21 @@ export default function HistoryTable({
     setDeleteTarget(task);
     setDeleteModalOpen(true);
     setContextMenu(null);
+    setSwipedRowId(null);
   };
 
   return (
-    <div className="history-table">
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 16,
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
+    <div
+      className={`history-table${isMobileView ? " history-table--mobile" : ""}`}
+    >
+      <div className="history-table__header">
+        <div className="history-table__summary">
           <Typography.Title level={5} style={{ marginBottom: 0 }}>
             Task List{projectName ? ` - ${projectName}` : ""}
           </Typography.Title>
-          <Typography.Text type="secondary">
-            Showing {rows.length} of {total} tasks (page size {PAGE_SIZE}).
-          </Typography.Text>
         </div>
 
-        <Space size="middle" wrap>
+        <Space className="history-table__actions" size="middle">
           {dateRange ? (
             <Typography.Text type="secondary">
               Selected range total:{" "}
@@ -687,56 +731,248 @@ export default function HistoryTable({
               </span>
             </Typography.Text>
           ) : null}
-          <RangePicker
-            value={dateRange}
-            onChange={(value) => {
-              setDateRange(value);
-              setPage(0);
-            }}
-            allowClear
-            format="YYYY-MM-DD"
-            placeholder={["Start date", "End date"]}
-          />
+          <div className="history-table__range">
+            <RangePicker
+              value={dateRange}
+              onChange={(value) => {
+                setDateRange(value);
+                setPage(0);
+              }}
+              allowClear
+              format="YYYY-MM-DD"
+              placeholder={["Start date", "End date"]}
+              inputReadOnly
+              getPopupContainer={(trigger) =>
+                trigger.parentElement ?? document.body
+              }
+              popupClassName="history-table__range-popup"
+            />
+          </div>
           <Button
             icon={<DownloadOutlined />}
             onClick={downloadExcel}
             disabled={rows.length === 0}
+            className="history-table__download"
           >
             Download Excel
           </Button>
-          <Pagination
-            current={page + 1}
-            pageSize={PAGE_SIZE}
-            total={total}
-            showSizeChanger={false}
-            onChange={(nextPage) => setPage(nextPage - 1)}
-          />
         </Space>
       </div>
 
-      <div className="history-table__table">
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={rows}
-          loading={isLoading}
-          pagination={false}
-          size="middle"
-          scroll={{ x: "max-content", y: "var(--history-table-body-height)" }}
-          sticky
-          locale={{ emptyText: "No history yet." }}
-          onRow={(record) => ({
-            onContextMenu: (event) => {
-              event.preventDefault();
-              const position = getContextMenuPosition(
-                event.clientX,
-                event.clientY,
-              );
-              setContextMenu({ task: record, ...position });
-            },
-          })}
+      {isMobileView ? (
+        <Pagination
+          className="history-table__pagination history-table__pagination--top"
+          current={page + 1}
+          pageSize={PAGE_SIZE}
+          total={total}
+          showSizeChanger={false}
+          onChange={(nextPage) => setPage(nextPage - 1)}
         />
-      </div>
+      ) : (
+        <Pagination
+          className="history-table__pagination"
+          current={page + 1}
+          pageSize={PAGE_SIZE}
+          total={total}
+          showSizeChanger={false}
+          onChange={(nextPage) => setPage(nextPage - 1)}
+        />
+      )}
+
+      {isMobileView ? (
+        <>
+          <div className="history-table__cards">
+          {isLoading ? (
+            <Typography.Text type="secondary">Loading...</Typography.Text>
+          ) : rows.length === 0 ? (
+            <Typography.Text type="secondary">No history yet.</Typography.Text>
+          ) : (
+            rows.map((record) => (
+              <div key={record.id} className="history-table__card">
+                <div className="history-table__card-header">
+                  <div className="history-table__card-title">
+                    <Typography.Text strong>
+                      {record.title}
+                    </Typography.Text>
+                    {record.notes ? (
+                      <Typography.Text type="secondary">
+                        {record.notes}
+                      </Typography.Text>
+                    ) : null}
+                  </div>
+                  <Button
+                    type="text"
+                    icon={<MoreOutlined />}
+                    aria-label="Task actions"
+                    onClick={(event) =>
+                      openContextMenuAt(
+                        record,
+                        event.currentTarget as HTMLElement,
+                      )
+                    }
+                  />
+                </div>
+                <div className="history-table__card-meta">
+                  <span className="history-table__card-duration">
+                    {formatDuration(getDisplayDurationMs(record))}
+                  </span>
+                  <Tag
+                    color={statusTagColors[record.status]}
+                    style={{
+                      color: statusTextColors[record.status],
+                      border: "none",
+                      borderRadius: 999,
+                    }}
+                  >
+                    {formatStatusLabel(record.status)}
+                  </Tag>
+                </div>
+                <div className="history-table__card-times">
+                  <span>
+                    Started: {formatDateTimeYmdHms(record.started_at)}
+                  </span>
+                  <span>
+                    Ended: {formatDateTimeYmdHms(record.ended_at)}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+          </div>
+        </>
+      ) : (
+        <div className="history-table__table">
+          <Table
+            rowKey="id"
+            columns={columns}
+            dataSource={rows}
+            loading={isLoading}
+            pagination={false}
+            size="middle"
+            scroll={{ x: "max-content", y: "var(--history-table-body-height)" }}
+            sticky
+            locale={{ emptyText: "No history yet." }}
+            rowClassName={(record) =>
+              `history-table__row${
+                swipedRowId === record.id ? " is-swiped" : ""
+              }`
+            }
+            onRow={(record) => ({
+              onContextMenu: (event) => {
+                event.preventDefault();
+                const position = getContextMenuPosition(
+                  event.clientX,
+                  event.clientY,
+                );
+                setContextMenu({ task: record, ...position });
+              },
+              onPointerDown: (event) => {
+                if (event.pointerType === "mouse" && event.button !== 0) return;
+                clearLongPress();
+                longPressTriggeredRef.current = false;
+                swipeStateRef.current = {
+                  rowId: record.id,
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  lastX: event.clientX,
+                  lastY: event.clientY,
+                  moved: false,
+                  pointerId: event.pointerId,
+                  pointerType: event.pointerType,
+                };
+                if (event.pointerType === "touch") {
+                  const { clientX, clientY } = event;
+                  longPressTimeoutRef.current = window.setTimeout(() => {
+                    if (swipeStateRef.current.moved) return;
+                    longPressTriggeredRef.current = true;
+                    const position = getContextMenuPosition(clientX, clientY);
+                    setContextMenu({ task: record, ...position });
+                    setSwipedRowId(null);
+                  }, 450);
+                }
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+              },
+              onPointerMove: (event) => {
+                if (
+                  swipeStateRef.current.rowId !== record.id ||
+                  swipeStateRef.current.pointerId !== event.pointerId
+                ) {
+                  return;
+                }
+                const nextX = event.clientX;
+                const nextY = event.clientY;
+                const dx = nextX - swipeStateRef.current.startX;
+                const dy = nextY - swipeStateRef.current.startY;
+                if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+                  swipeStateRef.current.moved = true;
+                  clearLongPress();
+                }
+                if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+                  event.preventDefault();
+                }
+                swipeStateRef.current.lastX = nextX;
+                swipeStateRef.current.lastY = nextY;
+              },
+              onPointerUp: (event) => {
+                if (
+                  swipeStateRef.current.rowId !== record.id ||
+                  swipeStateRef.current.pointerId !== event.pointerId
+                ) {
+                  return;
+                }
+                clearLongPress();
+                const endX = event.clientX ?? swipeStateRef.current.lastX;
+                const endY = event.clientY ?? swipeStateRef.current.lastY;
+                const dx = endX - swipeStateRef.current.startX;
+                const dy = endY - swipeStateRef.current.startY;
+                const isHorizontal = Math.abs(dx) > Math.abs(dy);
+                const threshold = 40;
+                if (longPressTriggeredRef.current) {
+                  longPressTriggeredRef.current = false;
+                } else if (isHorizontal && Math.abs(dx) > threshold) {
+                  if (dx > 0) {
+                    setSwipedRowId(record.id);
+                  } else {
+                    setSwipedRowId(null);
+                  }
+                } else if (!swipeStateRef.current.moved) {
+                  setSwipedRowId((prev) =>
+                    prev === record.id ? null : prev,
+                  );
+                }
+                event.currentTarget.releasePointerCapture?.(event.pointerId);
+                swipeStateRef.current = {
+                  rowId: null,
+                  startX: 0,
+                  startY: 0,
+                  lastX: 0,
+                  lastY: 0,
+                  moved: false,
+                  pointerId: null,
+                  pointerType: null,
+                };
+              },
+              onPointerCancel: (event) => {
+                if (swipeStateRef.current.pointerId === event.pointerId) {
+                  event.currentTarget.releasePointerCapture?.(event.pointerId);
+                }
+                clearLongPress();
+                longPressTriggeredRef.current = false;
+                swipeStateRef.current = {
+                  rowId: null,
+                  startX: 0,
+                  startY: 0,
+                  lastX: 0,
+                  lastY: 0,
+                  moved: false,
+                  pointerId: null,
+                  pointerType: null,
+                };
+              },
+            })}
+          />
+        </div>
+      )}
 
       {contextMenu ? (
         <div
@@ -747,15 +983,31 @@ export default function HistoryTable({
             top: contextMenu.y,
             left: contextMenu.x,
             zIndex: 1000,
-            background: "#ffffff",
+            background: colors.surface,
             borderRadius: 8,
-            boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)",
+            boxShadow: `0 10px 24px ${colors.shadowStrong}`,
             padding: 4,
             minWidth: 160,
           }}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
+          <Button
+            type="text"
+            style={{
+              width: "100%",
+              textAlign: "left",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              justifyContent: "flex-start",
+            }}
+            icon={<EditOutlined />}
+            disabled={contextMenu.task.status === "running"}
+            onClick={() => openEdit(contextMenu.task)}
+          >
+            Edit
+          </Button>
           <Button
             type="text"
             style={{
@@ -813,7 +1065,10 @@ export default function HistoryTable({
         footer={
           <Button
             type="primary"
-            style={{ backgroundColor: "#007E6E", borderColor: "#007E6E" }}
+            style={{
+              backgroundColor: colors.success,
+              borderColor: colors.success,
+            }}
             onClick={() => setViewTask(null)}
           >
             Close
@@ -877,13 +1132,13 @@ export default function HistoryTable({
         okText="Delete"
         cancelText="Cancel"
         okButtonProps={{
-          style: { backgroundColor: "#D73535", borderColor: "#D73535" },
+          style: { backgroundColor: colors.danger, borderColor: colors.danger },
         }}
         cancelButtonProps={{
           style: {
-            backgroundColor: "#FFA239",
-            borderColor: "#FFA239",
-            color: "#0f172a",
+            backgroundColor: colors.warning,
+            borderColor: colors.warning,
+            color: colors.slate900,
           },
         }}
       >

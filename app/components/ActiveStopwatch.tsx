@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  PlayCircleOutlined,
+} from "@ant-design/icons";
 import { Button, Card, Space, Typography } from "antd";
 import { TaskRow } from "../types/task";
 import { formatDuration, nowMs } from "../lib/time";
 import { supabaseBrowser } from "../lib/supabaseBrowser";
 import { friendlySupabaseError } from "../lib/supabaseErrors";
 import { toast } from "../lib/toast";
+import { colors } from "../styles/colors";
 
 type Status = "running" | "paused";
 
@@ -216,9 +222,7 @@ export default function ActiveStopwatch({
 
   return (
     <Card type="inner">
-      <div
-        style={{ display: "flex", justifyContent: "space-between", gap: 16 }}
-      >
+      <div className="active-stopwatch__row">
         <div>
           <Typography.Text type="secondary">Active Task</Typography.Text>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -229,7 +233,7 @@ export default function ActiveStopwatch({
           ) : null}
         </div>
 
-        <div style={{ textAlign: "right" }}>
+        <div className="active-stopwatch__meta">
           <Typography.Text type="secondary">Elapsed</Typography.Text>
           <Typography.Title
             level={3}
@@ -243,11 +247,19 @@ export default function ActiveStopwatch({
         </div>
       </div>
 
-      <Space size="middle" wrap style={{ marginTop: 16 }}>
+      <Space
+        size="middle"
+        wrap
+        style={{ marginTop: 16 }}
+        className="active-stopwatch__actions"
+      >
         {status === "running" ? (
           <Button
             type="primary"
-            style={{ backgroundColor: "#D73535", borderColor: "#D73535" }}
+            style={{
+              backgroundColor: colors.danger,
+              borderColor: colors.danger,
+            }}
             onClick={pause}
           >
             Pause
@@ -255,30 +267,45 @@ export default function ActiveStopwatch({
         ) : (
           <Button
             type="primary"
-            style={{ backgroundColor: "#D73535", borderColor: "#D73535" }}
+            style={{
+              backgroundColor: colors.danger,
+              borderColor: colors.danger,
+            }}
             onClick={resume}
+            icon={<PlayCircleOutlined />}
+            className="active-stopwatch__action active-stopwatch__action--resume"
+            aria-label="Resume"
           >
-            Resume
+            <span className="active-stopwatch__label">Resume</span>
           </Button>
         )}
 
         <Button
-          type="primary"
-          style={{ backgroundColor: "#007E6E", borderColor: "#007E6E" }}
-          onClick={finish}
+          style={{
+            backgroundColor: colors.warning,
+            borderColor: colors.warning,
+            color: colors.slate900,
+          }}
+          onClick={cancel}
+          icon={<CloseCircleOutlined />}
+          className="active-stopwatch__action active-stopwatch__action--cancel"
+          aria-label="Cancel"
         >
-          Finish
+          <span className="active-stopwatch__label">Cancel</span>
         </Button>
 
         <Button
+          type="primary"
           style={{
-            backgroundColor: "#FFA239",
-            borderColor: "#FFA239",
-            color: "#0f172a",
+            backgroundColor: colors.success,
+            borderColor: colors.success,
           }}
-          onClick={cancel}
+          onClick={finish}
+          icon={<CheckCircleOutlined />}
+          className="active-stopwatch__action active-stopwatch__action--finish"
+          aria-label="Finish"
         >
-          Cancel
+          <span className="active-stopwatch__label">Finish</span>
         </Button>
       </Space>
     </Card>

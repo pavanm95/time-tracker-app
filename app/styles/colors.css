@@ -1,0 +1,35 @@
+:root {
+  --color-white: #ffffff;
+  --color-black: #0a0a0a;
+  --color-gray-900: #171717;
+  --color-gray-100: #ededed;
+  --color-slate-900: #0f172a;
+  --color-slate-600: #475569;
+  --color-slate-200: #e2e8f0;
+  --color-surface: var(--color-white);
+  --color-surface-muted: #f5f5f5;
+  --color-border-subtle: #e5e7eb;
+  --color-primary: #4988c4;
+  --color-success: #007e6e;
+  --color-warning: #ffa239;
+  --color-danger: #d73535;
+  --color-shadow-strong: rgba(15, 23, 42, 0.16);
+  --color-excel-border: #d0d7de;
+  --color-status-running: var(--color-danger);
+  --color-status-finished: var(--color-success);
+  --color-status-canceled: var(--color-warning);
+  --color-status-paused: var(--color-slate-200);
+  --color-status-text-running: var(--color-white);
+  --color-status-text-finished: var(--color-white);
+  --color-status-text-canceled: var(--color-slate-900);
+  --color-status-text-paused: var(--color-slate-600);
+  --background: var(--color-surface);
+  --foreground: var(--color-gray-900);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: var(--color-black);
+    --foreground: var(--color-gray-100);
+  }
+}

@@ -6,6 +6,7 @@ import { TaskRow } from "../types/task";
 import { supabaseBrowser } from "../lib/supabaseBrowser";
 import { friendlySupabaseError } from "../lib/supabaseErrors";
 import { toast } from "../lib/toast";
+import { colors } from "../styles/colors";
 
 export default function TaskComposer({
   onCreated,
@@ -102,9 +103,9 @@ export default function TaskComposer({
         <Button
           type="primary"
           style={{
-            backgroundColor: "#4988C4",
-            borderColor: "#4988C4",
-            color: "#fff",
+            backgroundColor: colors.primary,
+            borderColor: colors.primary,
+            color: colors.white,
           }}
           onClick={createTask}
           disabled={disabled || isSaving || !title.trim() || !projectId}

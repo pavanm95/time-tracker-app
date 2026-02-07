@@ -10,6 +10,7 @@ import {
 } from "../lib/time";
 import { friendlySupabaseError } from "../lib/supabaseErrors";
 import { toast } from "../lib/toast";
+import { colors } from "../styles/colors";
 
 type Props = {
   task: TaskRow | null;
@@ -80,9 +81,9 @@ export default function EditTaskModal({ task, open, onClose, onSaved }: Props) {
         <Space>
           <Button
             style={{
-              backgroundColor: "#FFA239",
-              borderColor: "#FFA239",
-              color: "#0f172a",
+              backgroundColor: colors.warning,
+              borderColor: colors.warning,
+              color: colors.slate900,
             }}
             onClick={onClose}
             disabled={saving}
@@ -91,7 +92,10 @@ export default function EditTaskModal({ task, open, onClose, onSaved }: Props) {
           </Button>
           <Button
             type="primary"
-            style={{ backgroundColor: "#007E6E", borderColor: "#007E6E" }}
+            style={{
+              backgroundColor: colors.success,
+              borderColor: colors.success,
+            }}
             onClick={save}
             disabled={saving || !title.trim() || !startedAt || !endedAt}
           >

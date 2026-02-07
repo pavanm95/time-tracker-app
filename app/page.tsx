@@ -2,10 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { LogoutOutlined } from "@ant-design/icons";
+import {
+  BranchesOutlined,
+  LeftOutlined,
+  LogoutOutlined,
+  MenuOutlined,
+  PlusOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons";
 import {
   Button,
   Card,
+  Dropdown,
   Input,
   Layout,
   List,
@@ -15,6 +23,7 @@ import {
   Spin,
   Typography,
 } from "antd";
+import type { MenuProps } from "antd";
 import { useRouter } from "next/navigation";
 import { TaskRow } from "./types/task";
 import { ProjectRow } from "./types/project";
@@ -28,6 +37,7 @@ import TaskComposer from "./components/TaskComposer";
 import ActiveStopwatch from "./components/ActiveStopwatch";
 import HistoryTable from "./components/HistoryTable";
 import { ACTIVE_PROJECT_ID_KEY } from "./lib/storageKeys";
+import { colors } from "./styles/colors";
 
 export default function Page() {
   const router = useRouter();
@@ -53,6 +63,8 @@ export default function Page() {
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [activeTask, setActiveTask] = useState<TaskRow | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const projectsCacheRef = useRef<{
     userId: string;
     projects: ProjectRow[];
@@ -96,6 +108,31 @@ export default function Page() {
       localStorage.removeItem(ACTIVE_PROJECT_ID_KEY);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mediaQuery.matches);
+    update();
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", update);
+    } else {
+      mediaQuery.addListener(update);
+    }
+    return () => {
+      if (mediaQuery.addEventListener) {
+        mediaQuery.removeEventListener("change", update);
+      } else {
+        mediaQuery.removeListener(update);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile && isHistoryOpen) {
+      setIsHistoryOpen(false);
+    }
+  }, [isMobile, isHistoryOpen]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -506,9 +543,28 @@ export default function Page() {
     router.replace("/auth");
   };
 
+  const mobileMenuItems: MenuProps["items"] = [
+    {
+      key: "user",
+      label: `Signed in as ${displayName}`,
+      disabled: true,
+    },
+    {
+      type: "divider",
+    },
+    {
+      key: "logout",
+      label: "Sign out",
+      icon: <LogoutOutlined />,
+    },
+  ];
+
   if (authLoading) {
     return (
-      <Layout style={{ height: "100vh", background: "#f5f5f5" }}>
+      <Layout
+        className="app-shell"
+        style={{ height: "100vh", background: colors.surfaceMuted }}
+      >
         <Layout.Content
           style={{
             height: "100%",
@@ -529,22 +585,28 @@ export default function Page() {
 
   return (
     <Layout
-      style={{ height: "100vh", overflow: "hidden", background: "#f5f5f5" }}
+      className="app-shell"
+      style={{
+        height: "100vh",
+        overflow: "hidden",
+        background: colors.surfaceMuted,
+      }}
     >
       <Layout.Header
+        className="app-header"
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           padding: "0 24px",
-          background: "#ffffff",
-          borderBottom: "1px solid #e5e7eb",
+          background: colors.surface,
+          borderBottom: `1px solid ${colors.borderSubtle}`,
         }}
       >
         <Typography.Text style={{ fontSize: 18, fontWeight: 600 }}>
           Personal Time & Task Tracker
         </Typography.Text>
-        <Space size="middle">
+        <Space size="middle" className="app-header__actions app-header__actions--desktop">
           <Typography.Text type="secondary">
             Signed in as {displayName}
           </Typography.Text>
@@ -556,6 +618,27 @@ export default function Page() {
             title="Sign out"
           />
         </Space>
+        <div className="app-header__menu">
+          <Dropdown
+            menu={{
+              items: mobileMenuItems,
+              onClick: ({ key }) => {
+                if (key === "logout") {
+                  signOut();
+                }
+              },
+            }}
+            placement="bottomRight"
+            trigger={["click"]}
+          >
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              aria-label="Open menu"
+              title="Open menu"
+            />
+          </Dropdown>
+        </div>
       </Layout.Header>
       <Layout.Content className="page-content">
         <div className="dashboard">
@@ -574,18 +657,24 @@ export default function Page() {
                   }))}
                   onChange={handleProjectChange}
                 />
-                <Button
-                  onClick={() => setCreateProjectOpen(true)}
-                  disabled={activeTask?.status === "running"}
-                >
-                  New Project
-                </Button>
-                <Button
-                  onClick={openManageProjects}
-                  disabled={activeTask?.status === "running"}
-                >
-                  Manage Projects
-                </Button>
+                <div className="overview-actions">
+                  <Button
+                    className="overview-action-button"
+                    icon={<PlusOutlined />}
+                    onClick={() => setCreateProjectOpen(true)}
+                    disabled={activeTask?.status === "running"}
+                  >
+                    New Project
+                  </Button>
+                  <Button
+                    className="overview-action-button"
+                    icon={<BranchesOutlined />}
+                    onClick={openManageProjects}
+                    disabled={activeTask?.status === "running"}
+                  >
+                    Manage Projects
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -618,27 +707,82 @@ export default function Page() {
             </div>
           </div>
 
-          <Card
-            className="history-card"
-            styles={{
-              body: {
-                height: "100%",
-                display: "flex",
-                flexDirection: "column",
-              },
-            }}
-          >
-            <HistoryTable
-              key={`${user.id}:${activeProjectId ?? "none"}`}
-              refreshKey={refreshKey}
-              projectId={activeProjectId}
-              projectName={activeProject?.name ?? null}
-              userId={user.id}
-              userDisplayName={displayName}
-            />
-          </Card>
+          {!isMobile ? (
+            <Card
+              className="history-card"
+              styles={{
+                body: {
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                },
+              }}
+            >
+              <HistoryTable
+                key={`${user.id}:${activeProjectId ?? "none"}`}
+                refreshKey={refreshKey}
+                projectId={activeProjectId}
+                projectName={activeProject?.name ?? null}
+                userId={user.id}
+                userDisplayName={displayName}
+                isMobileView={false}
+              />
+            </Card>
+          ) : null}
         </div>
       </Layout.Content>
+
+      {isMobile && !isHistoryOpen ? (
+        <div className="mobile-history-cta">
+          <Button
+            type="primary"
+            icon={<UnorderedListOutlined />}
+            onClick={() => setIsHistoryOpen(true)}
+            aria-label="Open task history"
+          >
+            Task List
+          </Button>
+        </div>
+      ) : null}
+
+      {isMobile && isHistoryOpen ? (
+        <div className="mobile-history-overlay">
+          <div className="mobile-history-header">
+            <Button
+              type="text"
+              icon={<LeftOutlined />}
+              onClick={() => setIsHistoryOpen(false)}
+              aria-label="Back"
+            >
+            </Button>
+            <Typography.Text strong className="mobile-history-title">
+              Task List{activeProject?.name ? ` - ${activeProject.name}` : ""}
+            </Typography.Text>
+          </div>
+          <div className="mobile-history-body">
+            <Card
+              className="mobile-history-card"
+              styles={{
+                body: {
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                },
+              }}
+            >
+              <HistoryTable
+                key={`mobile:${user.id}:${activeProjectId ?? "none"}`}
+                refreshKey={refreshKey}
+                projectId={activeProjectId}
+                projectName={activeProject?.name ?? null}
+                userId={user.id}
+                userDisplayName={displayName}
+                isMobileView
+              />
+            </Card>
+          </div>
+        </div>
+      ) : null}
 
       <Modal
         title="Create Project"

@@ -5,6 +5,7 @@ import { Button, Card, Form, Input, Tabs, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "../lib/supabaseBrowser";
 import { toast } from "../lib/toast";
+import { colors } from "../styles/colors";
 
 const USERNAME_PATTERN = /^[a-z0-9._-]{3,32}$/;
 
@@ -136,7 +137,7 @@ export default function AuthPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f5f5",
+        background: colors.surfaceMuted,
         padding: 24,
       }}
     >
