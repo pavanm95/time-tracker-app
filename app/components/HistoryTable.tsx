@@ -7,6 +7,7 @@ import {
   EditOutlined,
   EyeOutlined,
   MoreOutlined,
+  PlayCircleOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -50,6 +51,7 @@ export default function HistoryTable({
   projectName,
   userId,
   userDisplayName,
+  onTaskStarted,
   isMobileView = false,
 }: {
   refreshKey: number;
@@ -57,6 +59,7 @@ export default function HistoryTable({
   projectName: string | null;
   userId: string;
   userDisplayName: string;
+  onTaskStarted?: (task: TaskRow) => void;
   isMobileView?: boolean;
 }) {
   const [page, setPage] = useState(0);
@@ -67,6 +70,9 @@ export default function HistoryTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaskRow | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [restartTarget, setRestartTarget] = useState<TaskRow | null>(null);
+  const [restartModalOpen, setRestartModalOpen] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
   const [viewTask, setViewTask] = useState<TaskRow | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     task: TaskRow;
@@ -662,9 +668,13 @@ export default function HistoryTable({
     },
   ];
 
-  const getContextMenuPosition = (x: number, y: number) => {
+  const getContextMenuPosition = (
+    x: number,
+    y: number,
+    status?: TaskRow["status"],
+  ) => {
     const menuWidth = 180;
-    const menuHeight = 132;
+    const menuHeight = status === "canceled" ? 176 : 132;
     const padding = 8;
     const maxX = window.innerWidth - menuWidth - padding;
     const maxY = window.innerHeight - menuHeight - padding;
@@ -696,7 +706,7 @@ export default function HistoryTable({
 
   const openContextMenuAt = (task: TaskRow, element: HTMLElement) => {
     const rect = element.getBoundingClientRect();
-    const position = getContextMenuPosition(rect.right, rect.bottom);
+    const position = getContextMenuPosition(rect.right, rect.bottom, task.status);
     setContextMenu({ task, ...position });
     setSwipedRowId(null);
   };
@@ -707,6 +717,89 @@ export default function HistoryTable({
     setDeleteModalOpen(true);
     setContextMenu(null);
     setSwipedRowId(null);
+  };
+
+  const openRestart = (task: TaskRow) => {
+    if (task.status !== "canceled") return;
+    setRestartTarget(task);
+    setRestartModalOpen(true);
+    setContextMenu(null);
+    setSwipedRowId(null);
+  };
+
+  const restartTask = async (task: TaskRow) => {
+    if (task.status !== "canceled") return;
+    if (!projectId) {
+      toast.error("Select a project before starting a task.");
+      return;
+    }
+
+    setIsRestarting(true);
+
+    const { data: existingTasks, error: existingError } = await supabaseBrowser
+      .from("tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("user_id", userId)
+      .in("status", ["running", "paused"])
+      .neq("id", task.id)
+      .limit(1);
+
+    if (existingError) {
+      setIsRestarting(false);
+      toast.error(friendlySupabaseError(existingError.message));
+      return;
+    }
+
+    if (existingTasks && existingTasks.length > 0) {
+      setIsRestarting(false);
+      toast.error(
+        "This project already has an active task. Finish or cancel it first.",
+      );
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabaseBrowser
+      .from("tasks")
+      .update({
+        status: "running",
+        started_at: nowIso,
+        ended_at: null,
+        accumulated_ms: 0,
+        duration_ms: 0,
+        pause_count: 0,
+        paused_ms: 0,
+        paused_at: null,
+      })
+      .eq("id", task.id)
+      .select("*")
+      .single();
+
+    setIsRestarting(false);
+
+    if (error) {
+      toast.error(friendlySupabaseError(error.message));
+      return;
+    }
+
+    const restartedTask = data as TaskRow;
+    setRows((prev) =>
+      prev.map((row) => (row.id === restartedTask.id ? restartedTask : row)),
+    );
+    if (viewTask?.id === restartedTask.id) {
+      setViewTask(restartedTask);
+    }
+    if (editingTask?.id === restartedTask.id) {
+      setEditingTask(restartedTask);
+    }
+    cacheRef.current.clear();
+    void load();
+    onTaskStarted?.(restartedTask);
+
+    setRestartModalOpen(false);
+    setRestartTarget(null);
+    toast.success("Task started.");
   };
 
   return (
@@ -865,6 +958,7 @@ export default function HistoryTable({
                 const position = getContextMenuPosition(
                   event.clientX,
                   event.clientY,
+                  record.status,
                 );
                 setContextMenu({ task: record, ...position });
               },
@@ -887,7 +981,11 @@ export default function HistoryTable({
                   longPressTimeoutRef.current = window.setTimeout(() => {
                     if (swipeStateRef.current.moved) return;
                     longPressTriggeredRef.current = true;
-                    const position = getContextMenuPosition(clientX, clientY);
+                    const position = getContextMenuPosition(
+                      clientX,
+                      clientY,
+                      record.status,
+                    );
                     setContextMenu({ task: record, ...position });
                     setSwipedRowId(null);
                   }, 450);
@@ -1025,6 +1123,23 @@ export default function HistoryTable({
           >
             View
           </Button>
+          {contextMenu.task.status === "canceled" ? (
+            <Button
+              type="text"
+              style={{
+                width: "100%",
+                textAlign: "left",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                justifyContent: "flex-start",
+              }}
+              icon={<PlayCircleOutlined />}
+              onClick={() => openRestart(contextMenu.task)}
+            >
+              Start Again
+            </Button>
+          ) : null}
           <Button
             type="text"
             danger
@@ -1146,6 +1261,41 @@ export default function HistoryTable({
       >
         <Typography.Text>
           Delete `{deleteTarget?.title}`? This cannot be undone.
+        </Typography.Text>
+      </Modal>
+
+      <Modal
+        title="Start Task Again"
+        open={restartModalOpen && !!restartTarget}
+        onCancel={() => {
+          if (isRestarting) return;
+          setRestartModalOpen(false);
+          setRestartTarget(null);
+        }}
+        onOk={async () => {
+          if (!restartTarget) return;
+          await restartTask(restartTarget);
+        }}
+        okText="Start Task"
+        cancelText="Cancel"
+        confirmLoading={isRestarting}
+        okButtonProps={{
+          style: {
+            backgroundColor: colors.primary,
+            borderColor: colors.primary,
+            color: colors.white,
+          },
+        }}
+        cancelButtonProps={{
+          style: {
+            backgroundColor: colors.warning,
+            borderColor: colors.warning,
+            color: colors.slate900,
+          },
+        }}
+      >
+        <Typography.Text>
+          Start `{restartTarget?.title}` again? This restarts the same task.
         </Typography.Text>
       </Modal>
     </div>

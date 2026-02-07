@@ -357,6 +357,11 @@ export default function Page() {
     setRefreshKey((x) => x + 1);
   };
 
+  const onTaskStartedFromHistory = (task: TaskRow) => {
+    setActiveTask(task);
+    setRefreshKey((x) => x + 1);
+  };
+
   const createProject = async () => {
     const name = newProjectName.trim();
     if (!name || !user) {
@@ -729,6 +734,7 @@ export default function Page() {
                 projectName={activeProject?.name ?? null}
                 userId={user.id}
                 userDisplayName={displayName}
+                onTaskStarted={onTaskStartedFromHistory}
                 isMobileView={false}
               />
             </Card>
@@ -781,6 +787,7 @@ export default function Page() {
                 projectName={activeProject?.name ?? null}
                 userId={user.id}
                 userDisplayName={displayName}
+                onTaskStarted={onTaskStartedFromHistory}
                 isMobileView
               />
             </Card>
